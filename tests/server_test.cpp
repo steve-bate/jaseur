@@ -35,7 +35,7 @@ protected:
         address_ = "127.0.0.1";
         
         // Create test data directory
-        test_dir_ = "test_ap_data";
+        test_dir_ = "test_jaseur_data";
         if (!std::filesystem::exists(test_dir_)) {
             std::filesystem::create_directory(test_dir_);
         }

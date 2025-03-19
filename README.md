@@ -70,7 +70,7 @@ Configuration values are loaded in the following order, with later sources overr
 
 1. Default values in the code
 2. `jaseur.toml` file in the current directory
-3. Environment variables with the `AP_` prefix
+3. Environment variables with the `JASEUR_` prefix
 4. Command-line arguments
 
 ### TOML Configuration File
@@ -100,24 +100,23 @@ model = "llama3:8B"
 
 ### Environment Variables
 
-Environment variables are prefixed with `AP_` and use underscores instead of dots:
+Environment variables are prefixed with `JASEUR_` and use underscores instead of dots:
 
 ```bash
-# Basic settings
-export AP_BIND_ADDRESS="0.0.0.0"
-export AP_PORT=8000
-export AP_DEBUG=true
+export JASEUR_BIND_ADDRESS="0.0.0.0"
+export JASEUR_PORT=8000
+export JASEUR_DEBUG=true
 
-# Data settings
-export AP_DATA="data"
-export AP_DATA_PRIVATE="data/private"
+# Data paths
+export JASEUR_DATA="data"
+export JASEUR_DATA_PRIVATE="data/private"
 
-# Network settings
-export AP_NETWORK_ALLOW="127.0.0.1,192.168.1.100"
+# Network allow list
+export JASEUR_NETWORK_ALLOW="127.0.0.1,192.168.1.100"
 
-# Ollama settings
-export AP_OLLAMA_ENDPOINT="http://localhost:11434/api/generate"
-export AP_OLLAMA_MODEL="llama3:8B"
+# Ollama configuration for LLM integration
+export JASEUR_OLLAMA_ENDPOINT="http://localhost:11434/api/generate"
+export JASEUR_OLLAMA_MODEL="llama3:8B"
 ```
 
 ### Command-Line Arguments
@@ -153,8 +152,8 @@ Server command options:
 - `--enable-llm`: Enable LLM responder integration with Ollama
 - `--bind-address ADDR`: Address to bind to (default: 0.0.0.0)
 - `--port NUM`: Port to listen on (default: 8000)
-- `--data DIR`: AP data directory (default: ap_data)
-- `--data.private DIR`: Private key directory (default: ap_data/private)
+- `--data DIR`: AP data directory (default: jaseur_data)
+- `--data.private DIR`: Private key directory (default: jaseur_data/private)
 - `--network.allow IPS`: Semicolon-separated list of allowed IP addresses
 - `--ollama-endpoint URL`: Ollama API endpoint
 - `--ollama-model MODEL`: Ollama model to use
@@ -163,14 +162,14 @@ Server command options:
 
 ```bash
 # Store a JSON file in the resource store
-./jaseur resource put person.json ap_data
+./jaseur resource put person.json jaseur_data
 
 # Retrieve and display a resource
-./jaseur resource get https://example.com/users/alice ap_data
-./jaseur resource get https://example.com/users/alice ap_data --details
+./jaseur resource get https://example.com/users/alice jaseur_data
+./jaseur resource get https://example.com/users/alice jaseur_data --details
 
 # List all resources
-./jaseur resource list ap_data
+./jaseur resource list jaseur_data
 
 # Get the hash for a URI
 ./jaseur resource hash-uri https://example.com/users/alice
@@ -183,29 +182,29 @@ Server command options:
 
 ```bash
 # Create a new actor
-./jaseur actor create https://example.com/users/alice ap_data --name="Alice"
+./jaseur actor create https://example.com/users/alice jaseur_data --name="Alice"
 
 # List all actors
-./jaseur actor list ap_data
+./jaseur actor list jaseur_data
 
 # Remove an actor and all its resources
-./jaseur actor purge https://example.com/users/alice ap_data
+./jaseur actor purge https://example.com/users/alice jaseur_data
 ```
 
 ### Inbox/Outbox Management
 
 ```bash
 # List inbox contents
-./jaseur inbox list https://example.com/users/alice ap_data
+./jaseur inbox list https://example.com/users/alice jaseur_data
 
 # Clear inbox
-./jaseur inbox purge https://example.com/users/alice ap_data
+./jaseur inbox purge https://example.com/users/alice jaseur_data
 
 # List outbox contents
-./jaseur outbox list https://example.com/users/alice ap_data
+./jaseur outbox list https://example.com/users/alice jaseur_data
 
 # Clear outbox
-./jaseur outbox purge https://example.com/users/alice ap_data
+./jaseur outbox purge https://example.com/users/alice jaseur_data
 ```
 
 ## Features

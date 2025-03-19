@@ -27,10 +27,10 @@ void Config::load_from_env() {
             std::string key = env_var.substr(0, equals_pos);
             std::string value = env_var.substr(equals_pos + 1);
             
-            // Only process environment variables with AP_ prefix
-            if (key.find("AP_") == 0) {
-                // Convert AP_VARIABLE_NAME to variable.name
-                std::string normalized_key = key.substr(3); // Remove AP_ prefix
+            // Only process environment variables with JASEUR_ prefix
+            if (key.find("JASEUR_") == 0) {
+                // Convert JASEUR_VARIABLE_NAME to variable.name
+                std::string normalized_key = key.substr(7); // Remove JASEUR_ prefix
                 std::transform(normalized_key.begin(), normalized_key.end(), normalized_key.begin(), ::tolower);
                 
                 std::string processed_key;
