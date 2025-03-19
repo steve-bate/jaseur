@@ -97,11 +97,11 @@ bool ActivityPubHandler::validate_http_signature(const http::request<http::strin
         
         // Handle special (request-target) pseudo-header
         if (header == "(request-target)") {
-            std::string method = req.method_string();
+            auto method = std::string(req.method_string());
             std::transform(method.begin(), method.end(), method.begin(),
                 [](unsigned char c) { return std::tolower(c); });
             // Request target should not be lowercased as URLs can be case-sensitive
-            std::string target = req.target();
+            auto target = std::string(req.target());
             
             signed_string += "(request-target): " + method + " " + target;
             Logger::get().debug("Added (request-target) to signed string");

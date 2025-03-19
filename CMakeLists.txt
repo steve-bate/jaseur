@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 # Set policy CMP0135 to NEW to fix timestamp extraction warning
-cmake_policy(SET CMP0135 NEW)
+# cmake_policy(SET CMP0135 NEW)
 
 project(jaseur)
 

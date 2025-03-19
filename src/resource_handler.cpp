@@ -13,10 +13,10 @@ http::response<http::string_body> ResourceHandler::handle_request_impl(
     res.set(http::field::server, fmt::format("{} {}", SERVER_NAME, VERSION));
     res.set(http::field::content_type, "application/activity+json");
     
-    Logger::get().debug("Received request: {} {}", req.method_string(), req.target());
+    Logger::get().debug("Received request: {} {}", std::string(req.method_string()), std::string(req.target()));
     Logger::get().debug("Headers:");
     for(const auto& header : req) {
-        Logger::get().debug("  {}: {}", header.name_string(), header.value());
+        Logger::get().debug("  {}: {}", std::string(header.name_string()), std::string(header.value()));
     }
     
     std::string scheme;

@@ -180,7 +180,7 @@ http::response<http::string_body> WebFingerHandler::handle_request_impl(
         // Only handle GET requests to /.well-known/webfinger
         string target = string(req.target());
         if (req.method() != http::verb::get || target.find("/.well-known/webfinger") != 0) {
-            Logger::get().warn("Invalid request method or path: {} {}", req.method_string(), target);
+            Logger::get().warn("Invalid request method or path: {} {}", std::string(req.method_string()), target);
             res.result(http::status::not_found);
             res.body() = "{\"error\": \"Not found\"}";
             return res;
