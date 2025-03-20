@@ -45,3 +45,4 @@ cmake_install.cmake
 _deps/
 Testing/
 jaseur.toml
+build_coverage

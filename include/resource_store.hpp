@@ -50,7 +50,9 @@ public:
     
     // Helper methods
     std::string compute_hash(const std::string& uri);
-    std::string get_storage_path(const std::string& hash);
+    std::string extract_domain_info(const std::string& uri);
+    std::string generate_uuid();
+    std::string get_storage_path(const std::string& uri, bool for_write = false);
     bool store_json(const std::string& uri, const std::string& json_str);
     std::string load_json_str(const std::string& uri);
     void ensure_storage_dir();
@@ -65,6 +67,9 @@ public:
 private:
     std::string storage_dir_;
     bool hash_only_mode_ = false;
+    
+    // Maps URIs to their storage paths for faster lookups
+    std::map<std::string, std::string> uri_to_path_cache_;
 };
 
 } // namespace jaseur
