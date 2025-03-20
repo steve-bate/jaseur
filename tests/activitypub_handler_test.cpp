@@ -21,9 +21,11 @@ public:
     explicit TestActivityPubHandler(std::unique_ptr<ResourceStore> store)
         : ActivityPubHandler(std::move(store), jaseur::Config{}) {}
 
-
     TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service)
         : ActivityPubHandler(std::move(store), delivery_service, jaseur::Config{}) {}
+
+    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service, const jaseur::Config& config)
+        : ActivityPubHandler(std::move(store), delivery_service, config) {}
 
     using ActivityPubHandler::ActivityPubHandler;
 };
@@ -677,8 +679,16 @@ TEST_F(ActivityPubHandlerTestFixture, HandlesOutboxPostWithDelivery) {
     };
     mock_storage->put(outbox_collection);
     
+    // Set up config with instances table
+    jaseur::Config config;
+    config.set_table("instances", {
+        {"example", {
+            {"prefix_url", "https://example.com"}
+        }}
+    });
+
     // Create handler with both storage and delivery service
-    TestActivityPubHandler handler{std::move(mock_storage), mock_delivery};
+    TestActivityPubHandler handler{std::move(mock_storage), mock_delivery, config};
     
     // Create a test Create activity with multiple recipients
     json create_activity = {

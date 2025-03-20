@@ -1141,6 +1141,17 @@ void ActivityPubHandler::deliver_to_recipients(const nlohmann::json& activity, c
         return;
     }
 
+    // Filter recipients to only local URIs
+    std::vector<std::string> local_recipients;
+    std::copy_if(recipient_uris.begin(), recipient_uris.end(), 
+                 std::back_inserter(local_recipients),
+                 [this](const std::string& uri) { return is_local_uri(uri); });
+    
+    if (local_recipients.empty()) {
+        Logger::get().debug("No local recipients found for delivery");
+        return;
+    }
+
     // Create a copy of the activity for delivery
     nlohmann::json delivery_activity = activity;
 
@@ -1161,11 +1172,11 @@ void ActivityPubHandler::deliver_to_recipients(const nlohmann::json& activity, c
         }
     }
 
-    for (const auto& recipient : recipient_uris) {
+    for (const auto& recipient : local_recipients) {
         if (delivery_service_->deliver(delivery_activity)) {
-            Logger::get().info("Successfully delivered activity to {}", recipient);
+            Logger::get().info("Successfully delivered activity to local recipient {}", recipient);
         } else {
-            Logger::get().error("Failed to deliver activity to {}", recipient);
+            Logger::get().error("Failed to deliver activity to local recipient {}", recipient);
         }
     }
 }

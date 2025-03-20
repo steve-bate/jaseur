@@ -20,9 +20,19 @@ using tcp = boost::asio::ip::tcp;
 
 class MockRequestHandler : public RequestHandler {
 public:
-    MockRequestHandler() : RequestHandler(jaseur::Config{}) {}
+    MockRequestHandler() : RequestHandler(create_test_config()) {}
     MOCK_METHOD(http::response<http::string_body>, handle_request_impl, (const http::request<http::string_body>&), (override));
     MOCK_METHOD(bool, can_handle, (const http::request<http::string_body>&), (const, override));
+
+private:
+    static Config create_test_config() {
+        Config config;
+        // Add test instance prefixes
+        config.set_table("instances", {
+            {"test", {{"prefix_url", "http://example.com"}}}
+        });
+        return config;
+    }
 };
 
 class ServerTest : public ::testing::Test {
