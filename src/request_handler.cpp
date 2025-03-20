@@ -11,7 +11,6 @@ RequestHandler::RequestHandler(const Config& config) {
         auto prefix_it = instance.find("prefix_url");
         if (prefix_it != instance.end()) {
             instance_prefixes_.insert(prefix_it->second);
-            Logger::get().debug("Added instance prefix: {}", prefix_it->second);
         }
     }
 }

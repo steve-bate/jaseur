@@ -785,6 +785,45 @@ bool serve_command(const jaseur::Config& config) {
     jaseur::Logger::init(debug_mode ? "debug" : "info");
     
     try {
+        auto instances_table = config.get_table("instances");
+        if (instances_table.empty()) {
+            std::cerr << "Error: Missing 'instances' configuration" << std::endl;
+            return false;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error: Invalid 'instances' configuration: " << e.what() << std::endl;
+        return false;
+    }
+
+    auto instances = config.get_table("instances");
+    if (instances.empty()) {
+        std::cerr << "Error: 'instances' configuration table is empty" << std::endl;
+        return false;
+    }
+
+    bool valid_config = true;
+    for (const auto& [instance_name, instance_data] : instances) {
+        // Check if "host_prefix" exists in the instance_data map
+        if (instance_data.find("prefix_url") == instance_data.end()) {
+            std::cerr << "Error: Instance '" << instance_name << "' is missing required 'host_prefix' field" << std::endl;
+            valid_config = false;
+        }
+    }
+
+    if (!valid_config) {
+        std::cerr << "Error: Invalid instance configuration. Exiting." << std::endl;
+        return false;
+    }
+
+    // Log instance configurations
+    for (const auto& [instance_name, instance_data] : instances) {
+        std::string host_prefix = instance_data.at("prefix_url");
+        jaseur::Logger::get().info("Instance '{}' configured with host prefix: {}", 
+                                  instance_name, host_prefix);
+    }
+
+    // Continue with server setup after validation
+    try {
         // Create shared components
         auto http_client = jaseur::create_http_client();
         auto base_store = std::make_shared<jaseur::FileResourceStore>(data_dir);
@@ -881,12 +920,42 @@ bool serve_command(const jaseur::Config& config) {
     }
 }
 
+// Try to find and load configuration file
+void find_and_load_config(jaseur::Config& config) {
+    // First check environment variable
+    const char* env_config_path = std::getenv("JASEUR_CONFIG");
+    if (env_config_path && fs::exists(env_config_path)) {
+        config.load_from_toml(env_config_path);
+        return;
+    }
+
+    // Search for jaseur.toml in current and parent directories
+    fs::path current_path = fs::current_path();
+    fs::path config_file = "jaseur.toml";
+    
+    while (true) {
+        fs::path full_path = current_path / config_file;
+        if (fs::exists(full_path)) {
+            config.load_from_toml(full_path.string());
+            return;
+        }
+        
+        // Stop if we reached the root directory
+        if (current_path == current_path.parent_path()) {
+            break;
+        }
+        
+        // Move up to parent directory
+        current_path = current_path.parent_path();
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Create config and load settings from different sources
     jaseur::Config config;
     
     // Load from config file first (lowest priority)
-    config.load_from_toml("jaseur.toml");
+    find_and_load_config(config);
     
     // Load environment variables (middle priority)
     config.load_from_env();
