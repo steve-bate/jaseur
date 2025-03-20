@@ -142,7 +142,8 @@ nlohmann::json create_ordered_collection(const std::string& id, const std::strin
 }
 
 // Shared collection handling functions
-bool collection_list_command(const std::string& actor_uri, const std::string& storage_dir, const std::string& collection_name) {
+bool collection_list_command(const std::string& actor_uri, const jaseur::Config &config, const std::string& collection_name) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     // Get the actor document first
@@ -225,7 +226,8 @@ bool collection_list_command(const std::string& actor_uri, const std::string& st
     return true;
 }
 
-bool collection_purge_command(const std::string& actor_uri, const std::string& storage_dir, const std::string& collection_name) {
+bool collection_purge_command(const std::string& actor_uri, const jaseur::Config &config, const std::string& collection_name) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     // Get the actor document first
@@ -330,7 +332,8 @@ bool collection_purge_command(const std::string& actor_uri, const std::string& s
     }
 }
 
-bool resource_get_command(const std::string& uri, const std::string& storage_dir, bool show_details = false) {
+bool resource_get_command(const std::string& uri, const jaseur::Config& config) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     nlohmann::json resource = store.get(uri);
@@ -339,23 +342,11 @@ bool resource_get_command(const std::string& uri, const std::string& storage_dir
         return false;
     }
     
-    if (show_details) {
-        std::string hash = store.compute_hash(uri);
-        std::string file_path = store.get_storage_path(hash);
-        
-        std::cout << "Resource details:" << std::endl;
-        std::cout << "  URI: " << uri << std::endl;
-        std::cout << "  Hash: " << hash << std::endl;
-        std::cout << "  File: " << file_path << std::endl;
-        std::cout << "Content:" << std::endl;
-    }
-    
     std::cout << resource.dump(2) << std::endl;
     return true;
 }
 
-// Command implementations
-bool resource_put_command(const std::string& json_file_path, const std::string& storage_dir) {
+bool resource_put_command(const std::string& json_file_path, const jaseur::Config& config) {
     // Read the JSON file
     std::ifstream file(json_file_path);
     if (!file) {
@@ -379,6 +370,7 @@ bool resource_put_command(const std::string& json_file_path, const std::string& 
     }
 
     // Create resource store and store the JSON
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     if (store.put(json_data)) {
         std::string uri = json_data["id"];
@@ -395,9 +387,10 @@ bool resource_put_command(const std::string& json_file_path, const std::string& 
     }
 }
 
-bool actor_create_command(const std::string& uri, const std::string& userid, const std::string& storage_dir, const std::string& name = "") {
+bool actor_create_command(const std::string &uri, const std::string &userid, const jaseur::Config &config, const std::string &name = "") {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
-    
+
     // Create actor document
     nlohmann::json actor;
     actor["@context"] = "https://www.w3.org/ns/activitystreams";
@@ -446,20 +439,20 @@ bool actor_create_command(const std::string& uri, const std::string& userid, con
     return success;
 }
 
-bool inbox_list_command(const std::string& actor_uri, const std::string& storage_dir) {
-    return collection_list_command(actor_uri, storage_dir, "inbox");
+bool inbox_list_command(const std::string& actor_uri, const jaseur::Config &config) {
+    return collection_list_command(actor_uri, config, "inbox");
 }
 
-bool inbox_purge_command(const std::string& actor_uri, const std::string& storage_dir) {
-    return collection_purge_command(actor_uri, storage_dir, "inbox");
+bool inbox_purge_command(const std::string& actor_uri, const jaseur::Config &config) {
+    return collection_purge_command(actor_uri, config, "inbox");
 }
 
-bool outbox_list_command(const std::string& actor_uri, const std::string& storage_dir) {
-    return collection_list_command(actor_uri, storage_dir, "outbox");
+bool outbox_list_command(const std::string& actor_uri, const jaseur::Config &config) {
+    return collection_list_command(actor_uri, config, "outbox");
 }
 
-bool outbox_purge_command(const std::string& actor_uri, const std::string& storage_dir) {
-    return collection_purge_command(actor_uri, storage_dir, "outbox");
+bool outbox_purge_command(const std::string& actor_uri, const jaseur::Config &config) {
+    return collection_purge_command(actor_uri, config, "outbox");
 }
 
 bool resource_post_command(const std::string& token) {
@@ -575,7 +568,8 @@ bool resource_post_command(const std::string& token) {
     }
 }
 
-bool actor_purge_command(const std::string& actor_uri, const std::string& storage_dir) {
+bool actor_purge_command(const std::string& actor_uri, const jaseur::Config &config) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     // Get the actor document first
@@ -587,10 +581,10 @@ bool actor_purge_command(const std::string& actor_uri, const std::string& storag
     
     // First, purge inbox and outbox to clean up associated activities and objects
     if (actor.contains("inbox")) {
-        inbox_purge_command(actor_uri, storage_dir);
+        inbox_purge_command(actor_uri, config);
     }
     if (actor.contains("outbox")) {
-        outbox_purge_command(actor_uri, storage_dir);
+        outbox_purge_command(actor_uri, config);
     }
     
     // Get all resources from the store
@@ -641,7 +635,8 @@ bool actor_purge_command(const std::string& actor_uri, const std::string& storag
     return true;
 }
 
-bool actor_list_command(const std::string& storage_dir) {
+bool actor_list_command(const jaseur::Config &config) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     // Get all resources
@@ -676,7 +671,8 @@ bool actor_list_command(const std::string& storage_dir) {
     return true;
 }
 
-bool resource_list_command(const std::string& storage_dir) {
+bool resource_list_command(const jaseur::Config& config) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
     
     // Get all resources
@@ -717,22 +713,11 @@ bool resource_list_command(const std::string& storage_dir) {
     return true;
 }
 
-bool hash_uri_command(const std::string& uri, const std::string& storage_dir) {
-        if (storage_dir.empty()) {
-            // If no storage directory specified, use hash-only mode
-            jaseur::FileResourceStore temp_store("", true); // empty dir and hash_only_mode=true
-            std::string hash = temp_store.compute_hash(uri);
-            std::cout << hash << std::endl;
-            return true;
-        }
-
-        // If storage directory is specified, show file path as well
-        jaseur::FileResourceStore store(storage_dir);
-        std::string hash = store.compute_hash(uri);
-        std::string file_path = store.get_storage_path(hash);
-        
-        std::cout << hash << std::endl;
-        return true;
+bool hash_uri_command(const std::string& uri) {
+    jaseur::FileResourceStore temp_store("", true); // empty dir and hash_only_mode=true
+    std::string hash = temp_store.compute_hash(uri);
+    std::cout << hash << std::endl;
+    return true;
 }
 
 std::vector<std::string> parse_address_list(const std::string& address_list) {
@@ -914,30 +899,20 @@ int main(int argc, char* argv[]) {
     // resource put subcommand
     auto resource_put = resource->add_subcommand("put", "Store a JSON file in the resource store");
     std::string resource_put_json_file;
-    std::string resource_put_storage_dir;
     resource_put->add_option("json_file", resource_put_json_file, "JSON file to store")->required();
-    resource_put->add_option("storage_dir", resource_put_storage_dir, "Storage directory")->required();
 
     // resource get subcommand
     auto resource_get = resource->add_subcommand("get", "Show JSON content for a URI");
     std::string resource_get_uri;
-    std::string resource_get_storage_dir;
-    bool resource_get_details = false;
     resource_get->add_option("uri", resource_get_uri, "Resource URI")->required();
-    resource_get->add_option("storage_dir", resource_get_storage_dir, "Storage directory")->required();
-    resource_get->add_flag("--details", resource_get_details, "Show additional resource details");
 
     // resource list subcommand
     auto resource_list = resource->add_subcommand("list", "List all resources and their details");
-    std::string resource_list_storage_dir;
-    resource_list->add_option("storage_dir", resource_list_storage_dir, "Storage directory")->required();
 
     // resource hash-uri subcommand
     auto hash_uri = resource->add_subcommand("hash-uri", "Show hash and file path for a URI");
     std::string hash_uri_uri;
-    std::string hash_uri_storage_dir;
     hash_uri->add_option("uri", hash_uri_uri, "URI to hash")->required();
-    hash_uri->add_option("storage_dir", hash_uri_storage_dir, "Optional storage directory");
 
     // resource post subcommand (replaces send-note)
     auto resource_post = resource->add_subcommand("post", "Post a note or other content to an actor's outbox");
@@ -970,25 +945,21 @@ int main(int argc, char* argv[]) {
     // actor create subcommand
     auto create_actor = actor->add_subcommand("create", "Create a new actor and its collections");
     std::string create_actor_uri;
-    std::string create_actor_storage_dir;
     std::string create_actor_userid;
     std::string create_actor_name;
     create_actor->add_option("uri", create_actor_uri, "Actor URI")->required();
-    create_actor->add_option("storage_dir", create_actor_storage_dir, "Storage directory")->required();
     create_actor->add_option("--userid", create_actor_userid, "User ID (defaults to last path segment of URI)");
     create_actor->add_option("--name", create_actor_name, "Display name");
 
     // actor purge subcommand
     auto actor_purge = actor->add_subcommand("purge", "Remove an actor and all attributed resources");
     std::string actor_purge_uri;
-    std::string actor_purge_storage_dir;
     actor_purge->add_option("uri", actor_purge_uri, "Actor URI")->required();
-    actor_purge->add_option("storage_dir", actor_purge_storage_dir, "Storage directory")->required();
+
 
     // actor list subcommand
     auto actor_list = actor->add_subcommand("list", "List all actors and their file hashes");
-    std::string actor_list_storage_dir;
-    actor_list->add_option("storage_dir", actor_list_storage_dir, "Storage directory")->required();
+
 
     // inbox subcommand group
     auto inbox = app.add_subcommand("inbox", "Inbox management commands");
@@ -996,16 +967,13 @@ int main(int argc, char* argv[]) {
     // inbox list subcommand
     auto inbox_list = inbox->add_subcommand("list", "List contents of an actor's inbox");
     std::string inbox_list_uri;
-    std::string inbox_list_storage_dir;
     inbox_list->add_option("uri", inbox_list_uri, "Actor URI")->required();
-    inbox_list->add_option("storage_dir", inbox_list_storage_dir, "Storage directory")->required();
+
 
     // inbox purge subcommand
     auto inbox_purge = inbox->add_subcommand("purge", "Remove all items from an actor's inbox");
     std::string inbox_purge_uri;
-    std::string inbox_purge_storage_dir;
     inbox_purge->add_option("uri", inbox_purge_uri, "Actor URI")->required();
-    inbox_purge->add_option("storage_dir", inbox_purge_storage_dir, "Storage directory")->required();
 
     // outbox subcommand group
     auto outbox = app.add_subcommand("outbox", "Outbox management commands");
@@ -1013,16 +981,12 @@ int main(int argc, char* argv[]) {
     // outbox list subcommand
     auto outbox_list = outbox->add_subcommand("list", "List contents of an actor's outbox");
     std::string outbox_list_uri;
-    std::string outbox_list_storage_dir;
     outbox_list->add_option("uri", outbox_list_uri, "Actor URI")->required();
-    outbox_list->add_option("storage_dir", outbox_list_storage_dir, "Storage directory")->required();
 
     // outbox purge subcommand
     auto outbox_purge = outbox->add_subcommand("purge", "Remove all items from an actor's outbox");
     std::string outbox_purge_uri;
-    std::string outbox_purge_storage_dir;
     outbox_purge->add_option("uri", outbox_purge_uri, "Actor URI")->required();
-    outbox_purge->add_option("storage_dir", outbox_purge_storage_dir, "Storage directory")->required();
 
     try {
         app.parse(argc, argv);
@@ -1052,16 +1016,16 @@ int main(int argc, char* argv[]) {
 
         // Handle subcommands
         if (*resource_put) {
-            return resource_put_command(resource_put_json_file, resource_put_storage_dir) ? 0 : 1;
+            return resource_put_command(resource_put_json_file, config) ? 0 : 1;
         }
         else if (*resource_get) {
-            return resource_get_command(resource_get_uri, resource_get_storage_dir, resource_get_details) ? 0 : 1;
+            return resource_get_command(resource_get_uri, config) ? 0 : 1;
         }
         else if (*resource_list) {
-            return resource_list_command(resource_list_storage_dir) ? 0 : 1;
+            return resource_list_command(config) ? 0 : 1;
         }
         else if (*hash_uri) {
-            return hash_uri_command(hash_uri_uri, hash_uri_storage_dir) ? 0 : 1;
+            return hash_uri_command(hash_uri_uri) ? 0 : 1;
         }
         else if (*resource_post) {
             return resource_post_command(resource_post_token) ? 0 : 1;
@@ -1070,27 +1034,27 @@ int main(int argc, char* argv[]) {
             return serve_command(config) ? 0 : 1;
         }
         else if (*actor_purge) {
-            return actor_purge_command(actor_purge_uri, actor_purge_storage_dir) ? 0 : 1;
+            return actor_purge_command(actor_purge_uri, config) ? 0 : 1;
         }
         else if (*actor_list) {
-            return actor_list_command(actor_list_storage_dir) ? 0 : 1;
+            return actor_list_command(config) ? 0 : 1;
         }
         else if (*create_actor) {
             return actor_create_command(create_actor_uri, create_actor_userid.empty() ?
                 extract_last_path_segment(create_actor_uri) : create_actor_userid,
-                create_actor_storage_dir, create_actor_name) ? 0 : 1;
+                config, create_actor_name) ? 0 : 1;
         }
         else if (*inbox_list) {
-            return inbox_list_command(inbox_list_uri, inbox_list_storage_dir) ? 0 : 1;
+            return inbox_list_command(inbox_list_uri, config) ? 0 : 1;
         }
         else if (*inbox_purge) {
-            return inbox_purge_command(inbox_purge_uri, inbox_purge_storage_dir) ? 0 : 1;
+            return inbox_purge_command(inbox_purge_uri, config) ? 0 : 1;
         }
         else if (*outbox_list) {
-            return outbox_list_command(outbox_list_uri, outbox_list_storage_dir) ? 0 : 1;
+            return outbox_list_command(outbox_list_uri, config) ? 0 : 1;
         }
         else if (*outbox_purge) {
-            return outbox_purge_command(outbox_purge_uri, outbox_purge_storage_dir) ? 0 : 1;
+            return outbox_purge_command(outbox_purge_uri, config) ? 0 : 1;
         }
 
     } catch (const CLI::ParseError &e) {
