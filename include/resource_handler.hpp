@@ -6,8 +6,8 @@
 namespace jaseur {
 class ResourceHandler : public RequestHandler {
 public:
-    explicit ResourceHandler(std::shared_ptr<ResourceStore> storage) 
-        : storage_(storage) {}
+    ResourceHandler(std::shared_ptr<ResourceStore> storage, const Config& config) 
+        : RequestHandler(config), storage_(storage) {}
         
     bool can_handle(const http::request<http::string_body>& /*req*/) const override {
         return true;  // ResourceHandler can handle any path

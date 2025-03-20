@@ -812,7 +812,7 @@ bool serve_command(const jaseur::Config& config) {
             
         // Create handlers in reverse order (last to first)
         auto resource_handler = std::make_shared<jaseur::ResourceHandler>(
-            base_store->share());
+            base_store->share(), config);
             
         // Initialize ActivityPubHandler with or without LLM responder service
         std::shared_ptr<jaseur::ActivityPubHandler> activity_handler;
@@ -821,18 +821,20 @@ bool serve_command(const jaseur::Config& config) {
                 base_store->share(),
                 delivery_service,
                 llm_responder_service,
+                config,
                 private_data_dir);
             jaseur::Logger::get().info("ActivityPubHandler initialized with LLM responder service");
         } else {
             activity_handler = std::make_shared<jaseur::ActivityPubHandler>(
                 base_store->share(),
                 delivery_service,
+                config,
                 private_data_dir);
             jaseur::Logger::get().info("ActivityPubHandler initialized without LLM responder service");
         }
             
         auto webfinger_handler = std::make_shared<jaseur::WebFingerHandler>(
-            base_store->share());
+            base_store->share(), config);
         
         // Set up the chain
         activity_handler->set_successor(resource_handler);

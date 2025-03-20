@@ -2,6 +2,8 @@
 #include <boost/beast/http.hpp>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include "config.hpp"
 
 namespace jaseur {
 namespace http = boost::beast::http;
@@ -9,6 +11,9 @@ namespace http = boost::beast::http;
 class RequestHandler {
 public:
     virtual ~RequestHandler() = default;
+
+    // Initialize instance prefixes from config
+    explicit RequestHandler(const Config& config);
 
     // Set the next handler in the chain
     void set_successor(std::shared_ptr<RequestHandler> successor) {
@@ -37,12 +42,19 @@ public:
     virtual bool can_handle(const http::request<http::string_body>& req) const = 0;
 
 protected:
+    // Check if a URI belongs to this instance
+    bool is_local_uri(const std::string& uri) const;
+
     // The actual request handling implementation
     virtual http::response<http::string_body> handle_request_impl(
         const http::request<http::string_body>& req) = 0;
 
     // The next handler in the chain
     std::shared_ptr<RequestHandler> successor_;
+
+private:
+    // Set of instance prefix URLs
+    std::unordered_set<std::string> instance_prefixes_;
 };
 
 } // namespace jaseur

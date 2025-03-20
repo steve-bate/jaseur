@@ -7,21 +7,24 @@
 
 namespace jaseur {
 
-WebFingerHandler::WebFingerHandler() : storage_(std::make_unique<FileResourceStore>("data.public")) {}
+WebFingerHandler::WebFingerHandler(const Config& config)
+    : RequestHandler(config), 
+      storage_(std::make_unique<FileResourceStore>("data.public")) {}
 
-WebFingerHandler::WebFingerHandler(std::unique_ptr<ResourceStore> storage)
-    : storage_(std::move(storage)) {}
-
-bool WebFingerHandler::can_handle(const http::request<http::string_body>& req) const {
-    return string(req.target()).find("/.well-known/webfinger") == 0;
-}
+WebFingerHandler::WebFingerHandler(std::unique_ptr<ResourceStore> storage, const Config& config)
+    : RequestHandler(config),
+      storage_(std::move(storage)) {}
 
 void WebFingerHandler::set_storage_dir(const string& dir) {
-    Logger::get().debug("Setting WebFinger storage directory to: {}", dir);
-    auto* file_store = dynamic_cast<FileResourceStore*>(storage_.get());
+    auto file_store = dynamic_cast<FileResourceStore*>(storage_.get());
     if (file_store) {
         file_store->set_storage_dir(dir);
     }
+}
+
+bool WebFingerHandler::can_handle(const http::request<http::string_body>& req) const {
+    string target = string(req.target());
+    return req.method() == http::verb::get && target.find("/.well-known/webfinger") == 0;
 }
 
 optional<string> WebFingerHandler::parse_resource_param(const string& query_string) {

@@ -15,6 +15,36 @@
 
 namespace jaseur {
 
+ActivityPubHandler::ActivityPubHandler(const Config& config)
+    : RequestHandler(config),
+      storage_(std::make_unique<FileResourceStore>("data")),
+      private_data_dir_("data/private") {}
+
+ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage, const Config& config)
+    : RequestHandler(config),
+      storage_(std::move(storage)),
+      private_data_dir_("data/private") {}
+
+ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                                     std::shared_ptr<DeliveryService> delivery_service,
+                                     const Config& config,
+                                     std::string private_data_dir)
+    : RequestHandler(config),
+      storage_(std::move(storage)),
+      delivery_service_(std::move(delivery_service)),
+      private_data_dir_(std::move(private_data_dir)) {}
+      
+ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                                     std::shared_ptr<DeliveryService> delivery_service,
+                                     std::shared_ptr<LlmResponderService> llm_responder_service,
+                                     const Config& config,
+                                     std::string private_data_dir)
+    : RequestHandler(config),
+      storage_(std::move(storage)),
+      delivery_service_(std::move(delivery_service)),
+      llm_responder_service_(std::move(llm_responder_service)),
+      private_data_dir_(std::move(private_data_dir)) {}
+
 bool ActivityPubHandler::validate_http_signature(const http::request<http::string_body>& req) {
     // Extract the signature header
     auto signature_it = req.find("Signature");
@@ -364,31 +394,6 @@ std::vector<unsigned char> ActivityPubHandler::base64_decode(const std::string& 
     result.resize(decoded_size);
     return result;
 }
-
-ActivityPubHandler::ActivityPubHandler()
-    : storage_(std::make_unique<FileResourceStore>("data.public")),
-      private_data_dir_("data.private") {}
-
-ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage)
-    : storage_(std::move(storage)),
-      private_data_dir_("data.private") {}
-
-ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
-                                     std::shared_ptr<DeliveryService> delivery_service,
-                                     std::string private_data_dir)
-    : storage_(std::move(storage)),
-      delivery_service_(std::move(delivery_service)),
-      private_data_dir_(std::move(private_data_dir)) {}
-      
-// Add new constructor with LlmResponderService
-ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
-                                     std::shared_ptr<DeliveryService> delivery_service,
-                                     std::shared_ptr<LlmResponderService> llm_responder_service,
-                                     std::string private_data_dir)
-    : storage_(std::move(storage)),
-      delivery_service_(std::move(delivery_service)),
-      llm_responder_service_(std::move(llm_responder_service)),
-      private_data_dir_(std::move(private_data_dir)) {}
 
 bool ActivityPubHandler::can_handle(const http::request<http::string_body>& req) const {
     // Only handle POST requests

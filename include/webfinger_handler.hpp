@@ -6,6 +6,7 @@
 #include <optional>
 #include "resource_store.hpp"
 #include "request_handler.hpp"
+
 namespace jaseur {
     namespace http = boost::beast::http;
     using std::string;
@@ -13,8 +14,9 @@ namespace jaseur {
     
     class WebFingerHandler final : public RequestHandler {
     public:
-        WebFingerHandler();
-        explicit WebFingerHandler(std::unique_ptr<ResourceStore> storage);
+        // Default constructor removed since we need config
+        explicit WebFingerHandler(const Config& config);
+        WebFingerHandler(std::unique_ptr<ResourceStore> storage, const Config& config);
         ~WebFingerHandler() override = default;
         
         bool can_handle(const http::request<http::string_body>& req) const override;
@@ -22,7 +24,7 @@ namespace jaseur {
             
     protected:
         http::response<http::string_body> handle_request_impl(
-            const http::request<http::string_body, http::basic_fields<std::allocator<char>>>& req) override;
+            const http::request<http::string_body>& req) override;
     private:
         optional<string> parse_resource_param(const string& query_string);
         bool is_valid_uri(const string& uri);

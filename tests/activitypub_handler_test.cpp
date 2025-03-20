@@ -18,6 +18,13 @@ protected:
         return true; // Always validate for testing
     }
 public:
+    explicit TestActivityPubHandler(std::unique_ptr<ResourceStore> store)
+        : ActivityPubHandler(std::move(store), jaseur::Config{}) {}
+
+
+    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service)
+        : ActivityPubHandler(std::move(store), delivery_service, jaseur::Config{}) {}
+
     using ActivityPubHandler::ActivityPubHandler;
 };
 
@@ -166,7 +173,7 @@ TEST_F(ActivityPubHandlerTestFixture, HandlesFollowActivities) {
     };
     mock_storage->resources[test_actor["id"]] = test_actor;
     
-    TestActivityPubHandler handler{std::move(mock_storage)};
+    TestActivityPubHandler handler{std::move(mock_storage), jaseur::Config{}};
     auto* storage = static_cast<APMockResourceStore*>(handler.get_storage());
     
     // Test non-POST request
@@ -590,7 +597,7 @@ TEST_F(ActivityPubHandlerTestFixture, HandlesOutboxPost) {
     mock_storage->put(outbox_collection);
     
     // Create handler with both storage and delivery service
-    TestActivityPubHandler handler{std::move(mock_storage), mock_delivery};
+    TestActivityPubHandler handler{std::move(mock_storage)};
     auto* storage = static_cast<APMockResourceStore*>(handler.get_storage());
     
     // Create a test Create activity with a Note object

@@ -20,6 +20,7 @@ using tcp = boost::asio::ip::tcp;
 
 class MockRequestHandler : public RequestHandler {
 public:
+    MockRequestHandler() : RequestHandler(jaseur::Config{}) {}
     MOCK_METHOD(http::response<http::string_body>, handle_request_impl, (const http::request<http::string_body>&), (override));
     MOCK_METHOD(bool, can_handle, (const http::request<http::string_body>&), (const, override));
 };
@@ -44,11 +45,11 @@ protected:
         auto file_store = std::make_shared<FileResourceStore>(test_dir_);
         
         // Create ResourceHandler with the shared store
-        auto resource_handler = std::make_shared<ResourceHandler>(file_store);
+        auto resource_handler = std::make_shared<ResourceHandler>(file_store, jaseur::Config{});
         
         // Create WebFingerHandler with a new store instance
         auto webfinger_handler = std::make_shared<WebFingerHandler>(
-            std::make_unique<FileResourceStore>(test_dir_));
+            std::make_unique<FileResourceStore>(test_dir_), jaseur::Config{});
         
         // Chain the handlers
         webfinger_handler->set_successor(resource_handler);

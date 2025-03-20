@@ -76,6 +76,7 @@ add_library(server_lib
     src/http_client.cpp
     src/llm_responder_service.cpp
     src/config.cpp
+    src/request_handler.cpp
 )
 
 target_include_directories(server_lib PUBLIC

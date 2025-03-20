@@ -35,7 +35,7 @@ protected:
         std::filesystem::create_directories(test_dir_);
         // Initialize the file store with the test directory
         file_store_ = std::make_shared<FileResourceStore>(test_dir_);
-        handler_ = std::make_unique<ResourceHandler>(file_store_);
+        handler_ = std::make_unique<ResourceHandler>(file_store_, jaseur::Config{});
     }
     
     void TearDown() override {
@@ -122,7 +122,7 @@ TEST_F(ResourceHandlerTest, MockResourceStore) {
     EXPECT_CALL(*mock_store, get(test_uri))
         .WillOnce(::testing::Return(test_resource));
     
-    auto mock_handler = std::make_unique<ResourceHandler>(mock_store);
+    auto mock_handler = std::make_unique<ResourceHandler>(mock_store, jaseur::Config{});
     
     auto req = create_get_request(path, domain);
     auto res = mock_handler->handle_request(req);

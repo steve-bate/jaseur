@@ -35,7 +35,7 @@ protected:
             std::filesystem::create_directory(test_dir_);
         }
         // Create handler with our test file store and store both as concrete and interface type
-        auto handler = std::make_unique<WebFingerHandler>(std::move(file_store_));
+        auto handler = std::make_unique<WebFingerHandler>(std::move(file_store_), jaseur::Config{});
         concrete_handler_ = handler.get();  // Keep a raw pointer to the concrete type for tests that need it
         handler_ = std::move(handler);      // Store as RequestHandler interface type
         
@@ -183,7 +183,7 @@ TEST_F(WebFingerHandlerTest, MockResourceStore) {
     
     // Create handler with mock store and access through interface
     std::unique_ptr<RequestHandler> mock_handler = 
-        std::make_unique<WebFingerHandler>(std::move(mock_store));
+        std::make_unique<WebFingerHandler>(std::move(mock_store), jaseur::Config{});
     
     auto req = create_get_request("/.well-known/webfinger?resource=" + resource_uri);
     auto res = mock_handler->handle_request(req);
