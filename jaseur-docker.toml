@@ -1,0 +1,33 @@
+# Jaseur ActivityPub Server Configuration Example
+# Save this file as jaseur.toml or specify with --config
+# Server settings
+bind-address = "0.0.0.0"
+port = 8000
+debug = false
+enable-llm = true
+
+# First instance
+[instances.ap]
+prefix_url = "https://ap.stevebate.dev"
+
+[instances.jaseur]
+prefix_url = "https://jaseur.stevebate.dev"
+
+# Data settings
+[data]
+public = "/app/data"
+private = "/app/data/private"
+
+# Network settings
+[network]
+# Address filtering can use:
+# - Individual IPs: "127.0.0.1"
+# - CIDR notation: "192.168.1.0/24"
+# - Domain names: "example.com" (will be resolved to IPs)
+allow = ["86.204.68.78", "192.168.1.0/24"]
+# block = ["10.1.2.3", "evil.example.com"] # Block specific addresses (processed before allow)
+
+# Ollama settings
+[ollama]
+endpoint = "http://localhost:11434/api/generate"
+model = "llama3:8B"
