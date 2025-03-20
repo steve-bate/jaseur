@@ -15,7 +15,7 @@
 namespace jaseur {
 
 // Version information
-constexpr const char* VERSION = "0.2.0";
+constexpr const char* VERSION = "0.3.0";
 constexpr const char* SERVER_NAME = "Jaseur";
 
 class Config {
