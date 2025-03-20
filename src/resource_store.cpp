@@ -117,7 +117,7 @@ std::string FileResourceStore::get_storage_path(const std::string& uri, bool for
     }
     
     if (for_write) {
-        // For new files, create a path with the domain info and a new UUID
+        // For new files, create a path with the domain info and hash
         std::string domain = extract_domain_info(uri);
         std::string path = storage_dir_ + "/" + domain;
         
@@ -126,9 +126,9 @@ std::string FileResourceStore::get_storage_path(const std::string& uri, bool for
             std::filesystem::create_directories(path);
         }
         
-        // Generate UUID-based filename
-        std::string uuid = generate_uuid();
-        std::string full_path = path + "/" + uuid + ".json";
+        // Generate hash-based filename
+        std::string hash = compute_hash(uri);
+        std::string full_path = path + "/" + hash + ".json";
         
         // Cache this path for future lookups
         uri_to_path_cache_[uri] = full_path;
@@ -139,8 +139,18 @@ std::string FileResourceStore::get_storage_path(const std::string& uri, bool for
         std::string domain = extract_domain_info(uri);
         std::string domain_dir = storage_dir_ + "/" + domain;
         
-        // If domain directory exists, search for a file with matching ID field
+        // If domain directory exists, look for file with matching hash
         if (std::filesystem::exists(domain_dir)) {
+            std::string hash = compute_hash(uri);
+            std::string hash_path = domain_dir + "/" + hash + ".json";
+            
+            if (std::filesystem::exists(hash_path)) {
+                // Cache and return the path
+                uri_to_path_cache_[uri] = hash_path;
+                return hash_path;
+            }
+            
+            // For backwards compatibility, also check files by ID field
             for (const auto& entry : std::filesystem::directory_iterator(domain_dir)) {
                 if (entry.path().extension() == ".json") {
                     try {

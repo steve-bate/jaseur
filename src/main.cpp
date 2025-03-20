@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <set>
 #include <sstream>
+#include <regex>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -683,11 +685,21 @@ bool resource_list_command(const jaseur::Config& config) {
         std::cout << "No resources found in storage." << std::endl;
         return true;
     }
+
+    // Get instance prefixes for ownership lookup
+    auto instances = config.get_table("instances");
+    std::unordered_set<std::string> instance_prefixes;
+    for (const auto& [name, instance] : instances) {
+        auto prefix_it = instance.find("prefix_url");
+        if (prefix_it != instance.end()) {
+            instance_prefixes.insert(prefix_it->second);
+        }
+    }
     
     // Print header
     std::cout << std::left << std::setw(60) << "Resource URI" 
               << std::left << std::setw(20) << "Type"
-              << std::left << std::setw(40) << "Attributed To"
+              << std::left << std::setw(40) << "Owner"
               << "File Hash" << std::endl;
     std::cout << std::string(120, '-') << std::endl;
     
@@ -696,14 +708,43 @@ bool resource_list_command(const jaseur::Config& config) {
         if (!resource.contains("id")) continue;
         
         std::string uri = resource["id"];
-        std::string type = resource.contains("type") ? resource["type"].get<std::string>() : "-";
-        std::string attributed = resource.contains("attributedTo") ? 
-            resource["attributedTo"].get<std::string>() : "-";
+        std::string type = "-";
+        if (resource.contains("type")) {
+            if (resource["type"].is_string()) {
+                type = resource["type"].get<std::string>();
+            } else if (resource["type"].is_array() && !resource["type"].empty()) {
+                type = resource["type"][0].get<std::string>();
+            }
+        }
+        
+        // Determine owner from attributedTo or actor field
+        std::string owner = "-";
+        if (resource.contains("attributedTo")) {
+            owner = resource["attributedTo"].get<std::string>();
+        } else if (resource.contains("actor")) {
+            owner = resource["actor"].get<std::string>();
+        } else if (type == "Create" && resource.contains("object") && 
+                  resource["object"].is_object() && resource["object"].contains("attributedTo")) {
+            owner = resource["object"]["attributedTo"].get<std::string>();
+        }
+
+        // For known ActivityPub actor types, try to simplify to instance prefix
+        if (owner == "-" && (type == "Person" || type == "Organization" || type == "Group" || 
+             type == "Service" || type == "Application")) {
+            // Extract scheme and authority from owner URI
+            std::regex uri_regex("^(https?://[^/]+)");
+            std::smatch matches;
+            if (std::regex_search(uri, matches, uri_regex)) {
+                std::string prefix = matches[1].str();
+                owner = prefix;
+            }
+        }
+        
         std::string hash = store.compute_hash(uri);
         
         std::cout << std::left << std::setw(60) << uri.substr(0, 59)
                  << std::left << std::setw(20) << type.substr(0, 19)
-                 << std::left << std::setw(40) << attributed.substr(0, 39)
+                 << std::left << std::setw(40) << owner.substr(0, 39)
                  << hash << std::endl;
     }
     
@@ -981,7 +1022,7 @@ int main(int argc, char* argv[]) {
     auto resource_list = resource->add_subcommand("list", "List all resources and their details");
 
     // resource hash-uri subcommand
-    auto hash_uri = resource->add_subcommand("hash-uri", "Show hash and file path for a URI");
+    auto hash_uri = resource->add_subcommand("hash-uri", "Show hash for a URI");
     std::string hash_uri_uri;
     hash_uri->add_option("uri", hash_uri_uri, "URI to hash")->required();
 
