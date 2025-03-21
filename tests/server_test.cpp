@@ -51,22 +51,30 @@ protected:
             std::filesystem::create_directory(test_dir_);
         }
         
+        // Create data directories
+        std::string private_dir = test_dir_ + "/private";
+        if (!std::filesystem::exists(private_dir)) {
+            std::filesystem::create_directory(private_dir);
+        }
+        
         // Create a shared FileResourceStore for the ResourceHandler
-        auto file_store = std::make_shared<FileResourceStore>(test_dir_);
+        auto public_store = std::make_shared<FileResourceStore>(test_dir_);
+        auto private_store = std::make_shared<FileResourceStore>(private_dir);
         
-        // Create ResourceHandler with the shared store
-        auto resource_handler = std::make_shared<ResourceHandler>(file_store, jaseur::Config{});
+        // Create ResourceHandler with both stores
+        auto resource_handler = std::make_shared<ResourceHandler>(
+            public_store, jaseur::Config{});
         
-        // Create WebFingerHandler with a new store instance
+        // Create WebFingerHandler with both stores
         auto webfinger_handler = std::make_shared<WebFingerHandler>(
-            std::make_unique<FileResourceStore>(test_dir_), jaseur::Config{});
+            public_store, jaseur::Config{});
         
         // Chain the handlers
         webfinger_handler->set_successor(resource_handler);
         handler_ = webfinger_handler;
         
         // Store file store pointer for test use
-        file_store_ = file_store.get();
+        file_store_ = public_store.get();
     }
     
     void TearDown() override {
@@ -263,7 +271,8 @@ TEST_F(ServerTest, RequestHandlerChain) {
             {"followers", base_url + "/users/testuser/followers"},
             {"preferredUsername", "testuser"},
             {"name", "Test User"},
-            {"url", actor_uri}
+            {"url", actor_uri},
+            {"alsoKnownAs", "acct:testuser@" + address_ + ":" + std::to_string(port_) }
         };
         
         // Store the actor using its full URI as the storage key

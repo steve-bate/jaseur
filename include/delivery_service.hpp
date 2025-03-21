@@ -18,9 +18,9 @@ class HttpClient;
  */
 class DeliveryService {
 public:
-    DeliveryService(std::shared_ptr<ResourceStore> resource_store, 
+    DeliveryService(std::shared_ptr<ResourceStore> public_store, 
+                   std::shared_ptr<ResourceStore> private_store,
                    std::shared_ptr<HttpClient> http_client,
-                   std::string private_data_dir = "data/private",
                    bool no_filesystem = false);
     
     virtual ~DeliveryService() = default;
@@ -86,9 +86,9 @@ public:
     virtual nlohmann::json load_actor(const std::string& actor_id);
 
 private:
-    std::shared_ptr<ResourceStore> resource_store_;
+    std::shared_ptr<ResourceStore> public_store_;
+    std::shared_ptr<ResourceStore> private_store_;
     std::shared_ptr<HttpClient> http_client_;
-    std::string private_data_dir_;
     bool no_filesystem_;
 };
 

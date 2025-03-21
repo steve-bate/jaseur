@@ -34,11 +34,12 @@ protected:
         fs::create_directory(private_keys_dir_);
         
         // Create mock objects
-        mock_store_ = std::make_shared<MockResourceStore>();
+        mock_public_store_ = std::make_shared<MockResourceStore>();
+        mock_private_store_ = std::make_shared<MockResourceStore>();
         mock_client_ = std::make_shared<MockHttpClient>();
         
         // Create test service
-        service_ = std::make_unique<DeliveryService>(mock_store_, mock_client_, private_keys_dir_);
+        service_ = std::make_unique<DeliveryService>(mock_public_store_, mock_private_store_, mock_client_);
         
         Logger::get().info("Creating test keypair for actor1");
         // Create a test RSA key pair for actor1
@@ -64,8 +65,8 @@ protected:
             {"outbox", "https://example.org/users/actor2/outbox"}
         };
         
-        mock_store_->add_resource(actor1["id"], actor1);
-        mock_store_->add_resource(actor2["id"], actor2);
+        mock_public_store_->add_resource(actor1["id"], actor1);
+        mock_public_store_->add_resource(actor2["id"], actor2);
         
         // Configure mock HTTP client to handle remote actor requests
         mock_client_->set_get_handler([this](const std::string& url, const std::map<std::string, std::string>&) {
@@ -131,59 +132,21 @@ protected:
         ASSERT_NE(pem_str.find("-----BEGIN PRIVATE KEY-----"), std::string::npos) << "Invalid PEM data";
         
         // Create the key identifier and hash it
-        std::string key_id = actor_id + "#private";
+        std::string key_id = actor_id + "/private";
         Logger::get().info("Test creating private key for ID: {}", key_id);
-        
-        std::string key_hash;
-        {
-            EVP_MD_CTX* md_ctx = EVP_MD_CTX_new();
-            ASSERT_NE(md_ctx, nullptr);
-            
-            ASSERT_EQ(EVP_DigestInit_ex(md_ctx, EVP_sha256(), nullptr), 1);
-            ASSERT_EQ(EVP_DigestUpdate(md_ctx, key_id.c_str(), key_id.size()), 1);
-            
-            unsigned char hash[EVP_MAX_MD_SIZE];
-            unsigned int hash_len;
-            
-            ASSERT_EQ(EVP_DigestFinal_ex(md_ctx, hash, &hash_len), 1);
-            
-            EVP_MD_CTX_free(md_ctx);
-            
-            std::stringstream ss;
-            for (unsigned int i = 0; i < hash_len; i++) {
-                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
-            }
-            key_hash = ss.str();
-        }
         
         // Create JSON data with id and privateKey
         nlohmann::json key_data;
         key_data["id"] = key_id;
         key_data["privateKey"] = pem_str;
         
-        // Save the JSON to a file
-        std::string key_path = fs::path(private_keys_dir_) / (key_hash + ".json");
-        Logger::get().info("Test saving private key to: {}", key_path.c_str());
+        mock_private_store_->put(key_data);
         
-        // Ensure directory exists
-        ASSERT_TRUE(fs::exists(private_keys_dir_)) << "Private keys directory does not exist: " << private_keys_dir_;
-        ASSERT_TRUE(fs::is_directory(private_keys_dir_)) << "Private keys path is not a directory: " << private_keys_dir_;
-        
-        std::ofstream file(key_path);
-        ASSERT_TRUE(file.is_open()) << "Failed to open key file for writing: " << key_path;
-        file << key_data.dump(2);
-        file.close();
-
-        // Verify the file was written
-        ASSERT_TRUE(fs::exists(key_path)) << "Key file was not created: " << key_path;
-        ASSERT_GT(fs::file_size(key_path), 100) << "Key file is too small: " << key_path;
-        
-        EVP_PKEY_free(pkey);
-        
-        Logger::get().info("Successfully created test keypair at {}", key_path);
+        Logger::get().info("Successfully created test keypair");
     }
     
-    std::shared_ptr<MockResourceStore> mock_store_;
+    std::shared_ptr<MockResourceStore> mock_public_store_;
+    std::shared_ptr<MockResourceStore> mock_private_store_;
     std::shared_ptr<MockHttpClient> mock_client_;
     std::unique_ptr<DeliveryService> service_;
     std::string private_keys_dir_;
@@ -235,7 +198,7 @@ TEST_F(DeliveryServiceTest, ResolveRecipientInboxes) {
     ASSERT_TRUE(inboxes3.empty());
     
     // Verify remote actor was added to the resource store
-    ASSERT_TRUE(mock_store_->exists("https://example.net/users/actor3"));
+    ASSERT_TRUE(mock_public_store_->exists("https://example.net/users/actor3"));
 }
 
 // Test creating signature headers

@@ -187,7 +187,7 @@ bool collection_list_command(const std::string& actor_uri, const jaseur::Config 
     std::cout << std::string(80, '-') << std::endl;
     std::cout << std::left << std::setw(50) << "Activity ID" 
               << std::left << std::setw(15) << "Type"
-              << "File Hash" << std::endl;
+              << std::endl;
     std::cout << std::string(80, '-') << std::endl;
     
     // List all activities
@@ -215,11 +215,10 @@ bool collection_list_command(const std::string& actor_uri, const jaseur::Config 
         
         std::string id = activity_uri;
         std::string type = activity["type"];
-        std::string hash = store.compute_hash(id);
         
         std::cout << std::left << std::setw(50) << id.substr(0, 49)
                  << std::left << std::setw(15) << type
-                 << hash << std::endl;
+                 << std::endl;
     }
     
     std::cout << std::string(80, '-') << std::endl;
@@ -335,17 +334,27 @@ bool collection_purge_command(const std::string& actor_uri, const jaseur::Config
 }
 
 bool resource_get_command(const std::string& uri, const jaseur::Config& config) {
-    std::string storage_dir = config.get<std::string>("data.public", "data");
-    jaseur::FileResourceStore store(storage_dir);
+    std::vector<std::string> storage_dirs;
     
-    nlohmann::json resource = store.get(uri);
-    if (resource.empty()) {
-        std::cerr << "Error: Could not find resource: " << uri << std::endl;
-        return false;
+    if (config.has("data.public")) {
+        storage_dirs.push_back(config.get<std::string>("data.public", ""));
     }
     
-    std::cout << resource.dump(2) << std::endl;
-    return true;
+    if (config.has("data.private")) {
+        storage_dirs.push_back(config.get<std::string>("data.private", ""));
+    }
+
+    for (const auto& storage_dir : storage_dirs) {
+        jaseur::FileResourceStore store(storage_dir);
+        nlohmann::json resource = store.get(uri);
+        if (!resource.empty()) {
+            std::cout << resource.dump(2) << std::endl;
+            return true;
+        }
+    }
+
+    std::cerr << "Error: Could not find resource: " << uri << std::endl;
+    return false;
 }
 
 bool resource_put_command(const std::string& json_file_path, const jaseur::Config& config) {
@@ -374,19 +383,12 @@ bool resource_put_command(const std::string& json_file_path, const jaseur::Confi
     // Create resource store and store the JSON
     std::string storage_dir = config.get<std::string>("data.public", "data");
     jaseur::FileResourceStore store(storage_dir);
-    if (store.put(json_data)) {
-        std::string uri = json_data["id"];
-        std::string hash = store.compute_hash(uri);
-        std::string file_path = store.get_storage_path(hash);
-        std::cout << "Successfully stored resource:" << std::endl;
-        std::cout << "  URI: " << uri << std::endl;
-        std::cout << "  Hash: " << hash << std::endl;
-        std::cout << "  File: " << file_path << std::endl;
-        return true;
-    } else {
+    if (!store.put(json_data)) {
         std::cerr << "Error: Failed to store the resource" << std::endl;
         return false;
     }
+
+    return true;
 }
 
 bool actor_create_command(const std::string &uri, const std::string &userid, const jaseur::Config &config, const std::string &name = "") {
@@ -426,12 +428,7 @@ bool actor_create_command(const std::string &uri, const std::string &userid, con
     for (const auto& [type, resource] : resources) {
         if (store.put(resource)) {
             std::string res_uri = resource["id"];
-            std::string hash = store.compute_hash(res_uri);
-            std::string file_path = store.get_storage_path(hash);
-            std::cout << "Successfully stored " << type << ":" << std::endl;
-            std::cout << "  URI: " << res_uri << std::endl;
-            std::cout << "  Hash: " << hash << std::endl;
-            std::cout << "  File: " << file_path << std::endl;
+            std::cout << "Successfully stored " << type << ": " << uri << std::endl;
         } else {
             std::cerr << "Error: Failed to store " << type << std::endl;
             success = false;
@@ -652,8 +649,7 @@ bool actor_list_command(const jaseur::Config &config) {
     }
     
     // Print header
-    std::cout << std::left << std::setw(60) << "Actor URI" 
-              << "File Hash" << std::endl;
+    std::cout << std::left << std::setw(60) << "Actor URI" << std::endl;
     std::cout << std::string(80, '-') << std::endl;
     
     // List all actors
@@ -661,10 +657,7 @@ bool actor_list_command(const jaseur::Config &config) {
         if (!actor.contains("id")) continue;
         
         std::string uri = actor["id"];
-        std::string hash = store.compute_hash(uri);
-        
-        std::cout << std::left << std::setw(60) << uri.substr(0, 59)
-                 << hash << std::endl;
+        std::cout << std::left << std::setw(60) << uri.substr(0, 59) << std::endl;
     }
     
     std::cout << std::string(80, '-') << std::endl;
@@ -700,7 +693,7 @@ bool resource_list_command(const jaseur::Config& config) {
     std::cout << std::left << std::setw(60) << "Resource URI" 
               << std::left << std::setw(20) << "Type"
               << std::left << std::setw(40) << "Owner"
-              << "File Hash" << std::endl;
+              << std::endl;
     std::cout << std::string(120, '-') << std::endl;
     
     // List all resources
@@ -739,25 +732,16 @@ bool resource_list_command(const jaseur::Config& config) {
                 owner = prefix;
             }
         }
-        
-        std::string hash = store.compute_hash(uri);
-        
+
         std::cout << std::left << std::setw(60) << uri.substr(0, 59)
                  << std::left << std::setw(20) << type.substr(0, 19)
                  << std::left << std::setw(40) << owner.substr(0, 39)
-                 << hash << std::endl;
+                 << std::endl;
     }
     
     std::cout << std::string(120, '-') << std::endl;
     std::cout << "Total resources: " << resources.size() << std::endl;
     
-    return true;
-}
-
-bool hash_uri_command(const std::string& uri) {
-    jaseur::FileResourceStore temp_store("", true); // empty dir and hash_only_mode=true
-    std::string hash = temp_store.compute_hash(uri);
-    std::cout << hash << std::endl;
     return true;
 }
 
@@ -868,12 +852,14 @@ bool serve_command(const jaseur::Config& config) {
         // Create shared components
         auto http_client = jaseur::create_http_client();
         auto base_store = std::make_shared<jaseur::FileResourceStore>(data_dir);
+        auto private_store = std::make_shared<jaseur::FileResourceStore>(private_data_dir);
         
         // Create delivery service
         auto delivery_service = std::make_shared<jaseur::DeliveryService>(
             base_store,
+            private_store,
             std::move(http_client),
-            private_data_dir);
+            false);
             
         // Create LLM responder service if enabled
         std::shared_ptr<jaseur::LlmResponderService> llm_responder_service;
@@ -883,38 +869,40 @@ bool serve_command(const jaseur::Config& config) {
             
             llm_responder_service = std::make_shared<jaseur::LlmResponderService>(
                 base_store,
+                private_store,
                 delivery_service,
-                jaseur::create_http_client(),  // Add HttpClient
-                private_data_dir,
+                jaseur::create_http_client(),
                 ollama_endpoint,
                 ollama_model);
         }
             
         // Create handlers in reverse order (last to first)
         auto resource_handler = std::make_shared<jaseur::ResourceHandler>(
-            base_store->share(), config);
+            base_store->share(),
+            config);
             
         // Initialize ActivityPubHandler with or without LLM responder service
         std::shared_ptr<jaseur::ActivityPubHandler> activity_handler;
         if (enable_llm && llm_responder_service) {
             activity_handler = std::make_shared<jaseur::ActivityPubHandler>(
                 base_store->share(),
+                private_store->share(),
                 delivery_service,
                 llm_responder_service,
-                config,
-                private_data_dir);
-            jaseur::Logger::get().info("ActivityPubHandler initialized with LLM responder service");
+                config);
+            jaseur::Logger::get().info("ActivityPubHandler initialized with LLM responder service and private store");
         } else {
             activity_handler = std::make_shared<jaseur::ActivityPubHandler>(
                 base_store->share(),
+                private_store->share(),
                 delivery_service,
-                config,
-                private_data_dir);
-            jaseur::Logger::get().info("ActivityPubHandler initialized without LLM responder service");
+                config);
+            jaseur::Logger::get().info("ActivityPubHandler initialized with private store");
         }
             
         auto webfinger_handler = std::make_shared<jaseur::WebFingerHandler>(
-            base_store->share(), config);
+            base_store->share(),
+            config);
         
         // Set up the chain
         activity_handler->set_successor(resource_handler);
@@ -991,6 +979,22 @@ void find_and_load_config(jaseur::Config& config) {
     }
 }
 
+// Add a new function for the resource path command
+bool resource_path_command(const std::string& uri, const jaseur::Config& config) {
+    std::string storage_dir = config.get<std::string>("data.public", "data");
+    
+    try {
+        // Create a resource store
+        jaseur::FileResourceStore store(storage_dir);
+        std::string path = store.get_storage_path(uri);
+        std::cout << path << std::endl;
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error determining resource path: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Create config and load settings from different sources
     jaseur::Config config;
@@ -1021,15 +1025,15 @@ int main(int argc, char* argv[]) {
     // resource list subcommand
     auto resource_list = resource->add_subcommand("list", "List all resources and their details");
 
-    // resource hash-uri subcommand
-    auto hash_uri = resource->add_subcommand("hash-uri", "Show hash for a URI");
-    std::string hash_uri_uri;
-    hash_uri->add_option("uri", hash_uri_uri, "URI to hash")->required();
-
     // resource post subcommand (replaces send-note)
     auto resource_post = resource->add_subcommand("post", "Post a note or other content to an actor's outbox");
     std::string resource_post_token;
     resource_post->add_option("--token", resource_post_token, "Authorization Bearer token");
+
+    // resource path subcommand
+    auto resource_path = resource->add_subcommand("path", "Show the file path for a resource");
+    std::string resource_path_uri;
+    resource_path->add_option("uri", resource_path_uri, "Resource URI")->required();
     
     // Add serve subcommand
     auto serve = app.add_subcommand("serve", "Start the ActivityPub server");
@@ -1136,11 +1140,11 @@ int main(int argc, char* argv[]) {
         else if (*resource_list) {
             return resource_list_command(config) ? 0 : 1;
         }
-        else if (*hash_uri) {
-            return hash_uri_command(hash_uri_uri) ? 0 : 1;
-        }
         else if (*resource_post) {
             return resource_post_command(resource_post_token) ? 0 : 1;
+        }
+        else if (*resource_path) {
+            return resource_path_command(resource_path_uri, config) ? 0 : 1;
         }
         else if (*serve) {
             return serve_command(config) ? 0 : 1;

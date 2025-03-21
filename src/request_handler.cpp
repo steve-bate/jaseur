@@ -4,7 +4,8 @@
 
 namespace jaseur {
 
-RequestHandler::RequestHandler(const Config& config) {
+RequestHandler::RequestHandler(const Config& config)
+    : config_(config) {
     // Get instances table from config
     auto instances = config.get_table("instances");
     for (const auto& [name, instance] : instances) {

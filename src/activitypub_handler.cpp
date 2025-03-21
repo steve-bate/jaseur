@@ -18,32 +18,34 @@ namespace jaseur {
 ActivityPubHandler::ActivityPubHandler(const Config& config)
     : RequestHandler(config),
       storage_(std::make_unique<FileResourceStore>("data")),
-      private_data_dir_("data/private") {}
-
-ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage, const Config& config)
-    : RequestHandler(config),
-      storage_(std::move(storage)),
-      private_data_dir_("data/private") {}
+      private_storage_(std::make_unique<FileResourceStore>("data/private")) {}
 
 ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                                     std::unique_ptr<ResourceStore> private_storage,
+                                     const Config& config)
+    : RequestHandler(config),
+      storage_(std::move(storage)),
+      private_storage_(std::move(private_storage)) {}
+
+ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                                     std::unique_ptr<ResourceStore> private_storage,
                                      std::shared_ptr<DeliveryService> delivery_service,
-                                     const Config& config,
-                                     std::string private_data_dir)
+                                     const Config& config)
     : RequestHandler(config),
       storage_(std::move(storage)),
-      delivery_service_(std::move(delivery_service)),
-      private_data_dir_(std::move(private_data_dir)) {}
-      
+      private_storage_(std::move(private_storage)),
+      delivery_service_(std::move(delivery_service)) {}
+
 ActivityPubHandler::ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                                     std::unique_ptr<ResourceStore> private_storage,
                                      std::shared_ptr<DeliveryService> delivery_service,
                                      std::shared_ptr<LlmResponderService> llm_responder_service,
-                                     const Config& config,
-                                     std::string private_data_dir)
+                                     const Config& config)
     : RequestHandler(config),
       storage_(std::move(storage)),
+      private_storage_(std::move(private_storage)),
       delivery_service_(std::move(delivery_service)),
-      llm_responder_service_(std::move(llm_responder_service)),
-      private_data_dir_(std::move(private_data_dir)) {}
+      llm_responder_service_(std::move(llm_responder_service)) {}
 
 bool ActivityPubHandler::validate_http_signature(const http::request<http::string_body>& req) {
     // Extract the signature header
@@ -289,65 +291,21 @@ bool ActivityPubHandler::validate_bearer_token(const http::request<http::string_
 nlohmann::json ActivityPubHandler::load_actor_private_data(const std::string& actor_uri) {
     try {
         // Create the private data identifier for the actor
-        std::string private_id = actor_uri + "#private";
+        std::string private_id = actor_uri + "/private";
         Logger::get().debug("Looking for private data with ID: {}", private_id);
         
-        // Hash the private_id for the filename
-        std::string key_hash;
-        {
-            EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-            if (!ctx) return {};
-            
-            if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return {};
+        if (private_storage_) {
+            nlohmann::json private_data = private_storage_->get(private_id);
+            if (!private_data.empty()) {
+                Logger::get().debug("Successfully loaded private data for actor from private store: {}", actor_uri);
+                return private_data;
             }
-            
-            if (EVP_DigestUpdate(ctx, private_id.c_str(), private_id.size()) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return {};
-            }
-            
-            unsigned char hash[EVP_MAX_MD_SIZE];
-            unsigned int hash_len;
-            
-            if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return {};
-            }
-            
-            EVP_MD_CTX_free(ctx);
-            
-            std::stringstream ss;
-            for (unsigned int i = 0; i < hash_len; i++) {
-                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
-            }
-            key_hash = ss.str();
+            Logger::get().debug("Private data not found for actor: {}", actor_uri);
+        } else {
+            Logger::get().error("No private storage available");
         }
         
-        // Try to read private data from JSON file
-        std::string file_path = std::filesystem::path(private_data_dir_) / (key_hash + ".json");
-        Logger::get().debug("Looking for private data file: {}", file_path);
-        
-        if (!std::filesystem::exists(file_path)) {
-            Logger::get().error("Private data file not found: {}", file_path);
-            return {};
-        }
-        
-        std::ifstream file(file_path);
-        if (!file.is_open()) {
-            Logger::get().error("Failed to open private data file: {}", file_path);
-            return {};
-        }
-        
-        try {
-            nlohmann::json private_data = nlohmann::json::parse(file);
-            Logger::get().debug("Successfully loaded private data for actor: {}", actor_uri);
-            return private_data;
-        } catch (const std::exception& e) {
-            Logger::get().error("Failed to parse private data file {}: {}", file_path, e.what());
-            return {};
-        }
+        return {};
     } catch (const std::exception& e) {
         Logger::get().error("Error loading private data for actor {}: {}", actor_uri, e.what());
         return {};
@@ -1205,7 +1163,6 @@ bool ActivityPubHandler::handle_delete_activity(const nlohmann::json& activity) 
         }
 
         // Verify the actor has permission to delete the object
-        // For now, we only allow the original actor to delete their own objects
         if (!object.contains("attributedTo") || object["attributedTo"] != actor_uri) {
             Logger::get().error("Actor {} not authorized to delete object {}", actor_uri, object_uri);
             return false;
@@ -1229,19 +1186,64 @@ bool ActivityPubHandler::handle_delete_activity(const nlohmann::json& activity) 
             tombstone["name"] = object["name"];
         }
 
+        // Find any collections that might reference this object
+        auto collections = storage_->query({{"type", "OrderedCollection"}});
+        for (const auto& collection : collections) {
+            if (collection.contains("orderedItems") && collection["orderedItems"].is_array()) {
+                auto items = collection["orderedItems"];
+                bool found = false;
+                
+                // Check if this collection contains our object
+                for (const auto& item : items) {
+                    if (item == object_uri) {
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (found) {
+                    // Remove the object reference and update the collection
+                    items.erase(std::remove(items.begin(), items.end(), object_uri), items.end());
+                    nlohmann::json updated_collection = collection;
+                    updated_collection["orderedItems"] = items;
+                    updated_collection["totalItems"] = items.size();
+                    storage_->put(updated_collection);
+                }
+            }
+        }
+
         // Replace the original object with the Tombstone
         if (!storage_->put(tombstone)) {
             Logger::get().error("Failed to save Tombstone object");
             return false;
         }
 
-        Logger::get().info("Successfully replaced {} with Tombstone", object_uri);
+        Logger::get().info("Successfully replaced {} with Tombstone and cleaned up collections", object_uri);
         return true;
 
     } catch (const std::exception& e) {
         Logger::get().error("Error handling Delete activity: {}", e.what());
         return false;
     }
+}
+
+// Implement the is_local_uri method
+bool ActivityPubHandler::is_local_uri(const std::string& uri) const {
+    // If we have a config with instances, check against instance prefixes
+    if (const auto& instances = get_config().get_table("instances"); !instances.empty()) {
+        for (const auto& [name, instance_data] : instances) {
+            if (instance_data.find("prefix_url") != instance_data.end()) {
+                const std::string& prefix = instance_data.at("prefix_url");
+                if (uri.rfind(prefix, 0) == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    // For testing purposes (no config), consider all URIs local
+    return true;
 }
 
 } // namespace jaseur

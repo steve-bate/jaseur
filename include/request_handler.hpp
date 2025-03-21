@@ -52,9 +52,11 @@ protected:
     // The next handler in the chain
     std::shared_ptr<RequestHandler> successor_;
 
+    const Config& get_config() const { return config_; }
 private:
     // Set of instance prefix URLs
     std::unordered_set<std::string> instance_prefixes_;
+    Config config_;
 };
 
 } // namespace jaseur

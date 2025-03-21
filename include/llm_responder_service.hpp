@@ -14,9 +14,9 @@ class LlmResponderService {
 public:
     LlmResponderService(
         std::shared_ptr<ResourceStore> resource_store,
+        std::shared_ptr<ResourceStore> private_store,
         std::shared_ptr<DeliveryService> delivery_service,
         std::shared_ptr<HttpClient> http_client,
-        std::string private_data_dir,
         std::string llm_endpoint,
         std::string llm_model,
         bool no_filesystem = false);
@@ -32,9 +32,9 @@ protected:
 
 private:
     std::shared_ptr<ResourceStore> resource_store_;
+    std::shared_ptr<ResourceStore> private_store_;
     std::shared_ptr<DeliveryService> delivery_service_;
     std::shared_ptr<HttpClient> http_client_;
-    std::string private_data_dir_;
     std::string llm_endpoint_;
     std::string llm_model_;
     bool no_filesystem_;

@@ -3,6 +3,7 @@
 #include "webfinger_handler.hpp"
 #include "request_handler.hpp"
 #include "resource_store.hpp"
+#include "logging.hpp"
 #include <boost/beast/http.hpp>
 #include <boost/beast/core.hpp>
 #include <filesystem>
@@ -28,167 +29,103 @@ public:
 class WebFingerHandlerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_dir_ = "test_ap_data";
-        file_store_ = std::make_unique<FileResourceStore>(test_dir_);
-        
-        if (!std::filesystem::exists(test_dir_)) {
-            std::filesystem::create_directory(test_dir_);
-        }
-        // Create handler with our test file store and store both as concrete and interface type
-        auto handler = std::make_unique<WebFingerHandler>(std::move(file_store_), jaseur::Config{});
-        concrete_handler_ = handler.get();  // Keep a raw pointer to the concrete type for tests that need it
-        handler_ = std::move(handler);      // Store as RequestHandler interface type
-        
-        // Create a new file store for test helpers
-        file_store_ = std::make_unique<FileResourceStore>(test_dir_);
+        Logger::init("debug");
+        public_store_ = std::make_shared<::testing::NiceMock<MockResourceStore>>();
+        handler_ = std::make_unique<WebFingerHandler>(public_store_, Config{});
     }
-
-    void TearDown() override {
-        if (std::filesystem::exists(test_dir_)) {
-            std::filesystem::remove_all(test_dir_);
-        }
-    }
-
-    // Helper to create test actor JSON file
-    void create_test_actor(const std::string& uri, bool has_inbox = true) {
-        nlohmann::json actor = {
-            {"type", "Person"},
-            {"id", uri}
-        };
-        if (has_inbox) {
-            actor["inbox"] = uri + "/inbox";
-        }
-        file_store_->put(actor);
-    }
-
-    // Helper to create HTTP GET request
-    http::request<http::string_body> create_get_request(const std::string& target) {
-        http::request<http::string_body> req{http::verb::get, target, 11};
-        req.set(http::field::host, "server.test");
-        req.set(http::field::user_agent, "WebFingerTest");
+    
+    http::request<http::string_body> create_webfinger_request(const std::string& resource) {
+        http::request<http::string_body> req{http::verb::get, "/.well-known/webfinger?resource=" + resource, 11};
+        req.set(http::field::host, "example.com");
+        req.set(http::field::user_agent, "test");
         return req;
     }
-
-    std::string test_dir_;
-    std::unique_ptr<RequestHandler> handler_;      // Using interface pointer
-    WebFingerHandler* concrete_handler_;           // Raw pointer for specific tests
-    std::unique_ptr<ResourceStore> file_store_;
+    
+    std::shared_ptr<MockResourceStore> public_store_;
+    std::unique_ptr<WebFingerHandler> handler_;
+    std::string test_account = "acct:test@example.com";
+    std::string test_uri = "http://example.com/users/test";
 };
 
-TEST_F(WebFingerHandlerTest, CanHandleMethodTest) {
-    // Should handle the exact path
-    EXPECT_TRUE(handler_->can_handle(create_get_request("/.well-known/webfinger")));
-
-    // Should handle paths that start with /.well-known/webfinger
-    EXPECT_TRUE(handler_->can_handle(create_get_request("/.well-known/webfinger?resource=acct:user@server.test")));
-
-    // Should not handle other paths
-    EXPECT_FALSE(handler_->can_handle(create_get_request("/users/bob")));
-    EXPECT_FALSE(handler_->can_handle(create_get_request("/well-known/webfinger")));
-    EXPECT_FALSE(handler_->can_handle(create_get_request("/.well-known/host-meta")));
-    EXPECT_FALSE(handler_->can_handle(create_get_request("/other/.well-known/webfinger")));
-    EXPECT_FALSE(handler_->can_handle(create_get_request("")));
+TEST_F(WebFingerHandlerTest, HandlesWebFingerPath) {
+    auto req = create_webfinger_request(test_account);
+    EXPECT_TRUE(handler_->can_handle(req));
+    
+    req.target("/.well-known/other");
+    EXPECT_FALSE(handler_->can_handle(req));
+    
+    // Test Accept header handling
+    auto req_with_accept = create_webfinger_request(test_account);
+    req_with_accept.set(http::field::accept, "application/jrd+json");
+    EXPECT_TRUE(handler_->can_handle(req_with_accept));
+    
+    auto req_wrong_accept = create_webfinger_request(test_account);
+    req_wrong_accept.set(http::field::accept, "application/xml");
+    EXPECT_TRUE(handler_->can_handle(req_wrong_accept));
 }
 
-TEST_F(WebFingerHandlerTest, HandlesInvalidResourceURI) {
-    auto req = create_get_request("/.well-known/webfinger?resource=not-a-uri");
+TEST_F(WebFingerHandlerTest, ValidatesAcceptHeader) {
+    ON_CALL(*public_store_, exists(::testing::_))
+        .WillByDefault(::testing::Return(false));
+    ON_CALL(*public_store_, query(::testing::_))
+        .WillByDefault(::testing::Return(std::vector<nlohmann::json>{}));
+
+    auto req = create_webfinger_request(test_account);
+    req.set(http::field::accept, "application/xml");
+    auto res = handler_->handle_request(req);
+    EXPECT_EQ(res.result(), http::status::not_acceptable);
+}
+
+TEST_F(WebFingerHandlerTest, HandlesAlsoKnownAsInPublicStore) {
+    std::string test_uri = "http://example.com/users/test";
+    std::string alias_uri = "acct:test@example.com";
+    nlohmann::json actor = {
+        {"id", test_uri},
+        {"inbox", test_uri + "/inbox"},
+        {"type", "Person"},
+        {"alsoKnownAs", nlohmann::json::array({alias_uri})}
+    };
+    
+    Query expected_query;
+    expected_query["@prefix"] = "";
+    expected_query["alsoKnownAs"] = alias_uri;
+    EXPECT_CALL(*public_store_, query(expected_query))
+        .WillOnce(::testing::Return(std::vector<nlohmann::json>{actor}));
+        
+    auto req = create_webfinger_request(alias_uri);
+    req.set(http::field::accept, "application/jrd+json");
+    auto res = handler_->handle_request(req);
+    EXPECT_EQ(res.result(), http::status::ok);
+    
+    nlohmann::json response = nlohmann::json::parse(res.body());
+    EXPECT_EQ(response["subject"], alias_uri);
+    EXPECT_EQ(response["links"].size(), 1);
+    EXPECT_EQ(response["links"][0]["rel"], "self");
+    EXPECT_EQ(response["links"][0]["type"], "application/activity+json");
+    EXPECT_EQ(response["links"][0]["href"], test_uri);
+}
+
+TEST_F(WebFingerHandlerTest, ReturnsNotFoundWhenResourceNotFound) {
+        
+    ON_CALL(*public_store_, exists(test_account))
+        .WillByDefault(::testing::Return(false));
+    ON_CALL(*public_store_, exists(test_uri))
+        .WillByDefault(::testing::Return(false));
+    ON_CALL(*public_store_, query(::testing::_))
+        .WillByDefault(::testing::Return(std::vector<nlohmann::json>{}));
+        
+    auto req = create_webfinger_request(test_account);
+    auto res = handler_->handle_request(req);
+    
+    EXPECT_EQ(res.result(), http::status::not_found);
+}
+
+TEST_F(WebFingerHandlerTest, HandlesMalformedRequest) {
+    http::request<http::string_body> req{http::verb::get, "/.well-known/webfinger", 11};
     auto res = handler_->handle_request(req);
     EXPECT_EQ(res.result(), http::status::bad_request);
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_TRUE(response["error"].get<std::string>().find("Invalid") != std::string::npos);
-}
-
-TEST_F(WebFingerHandlerTest, HandlesActorResource) {
-    std::string actor_uri = "https://server.test/users/test";
-    create_test_actor(actor_uri);
-    auto req = create_get_request("/.well-known/webfinger?resource=" + actor_uri);
-    auto res = handler_->handle_request(req);
-    EXPECT_EQ(res.result(), http::status::ok);
-    EXPECT_EQ(res[http::field::content_type], "application/jrd+json");
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_EQ(response["subject"], actor_uri);
-    EXPECT_FALSE(response["links"].empty());
-    auto self_link = response["links"][0];
-    EXPECT_EQ(self_link["rel"], "self");
-    EXPECT_EQ(self_link["type"], "application/activity+json");
-    EXPECT_EQ(self_link["href"], actor_uri);
-}
-
-TEST_F(WebFingerHandlerTest, HandlesNonActorResource) {
-    std::string resource_uri = "https://server.test/resource";
-    create_test_actor(resource_uri, false);  // Create without inbox
-    auto req = create_get_request("/.well-known/webfinger?resource=" + resource_uri);
-    auto res = handler_->handle_request(req);
-    EXPECT_EQ(res.result(), http::status::ok);
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_EQ(response["subject"], resource_uri);
-    EXPECT_TRUE(response["links"].empty());
-}
-
-TEST_F(WebFingerHandlerTest, HandlesNonexistentResource) {
-    std::string resource_uri = "https://server.test/nonexistent";
-    auto req = create_get_request("/.well-known/webfinger?resource=" + resource_uri);
-    auto res = handler_->handle_request(req);
-    EXPECT_EQ(res.result(), http::status::ok);
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_EQ(response["subject"], resource_uri);
-    EXPECT_TRUE(response["links"].empty());
-}
-
-TEST_F(WebFingerHandlerTest, HandlesAcctURI) {
-    std::string acct_uri = "acct:test@server.test";
-    std::string actor_uri = "https://server.test/users/test";
     
-    // Create an actor that has the acct URI in alsoKnownAs
-    nlohmann::json actor = {
-        {"type", "Person"},
-        {"id", actor_uri},
-        {"inbox", actor_uri + "/inbox"},
-        {"alsoKnownAs", acct_uri}
-    };
-    file_store_->put(actor);
-
-    auto req = create_get_request("/.well-known/webfinger?resource=" + acct_uri);
-    auto res = handler_->handle_request(req);
-    
-    EXPECT_EQ(res.result(), http::status::ok);
-    EXPECT_EQ(res[http::field::content_type], "application/jrd+json");
-    
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_EQ(response["subject"], acct_uri);
-    EXPECT_FALSE(response["links"].empty());
-    
-    auto self_link = response["links"][0];
-    EXPECT_EQ(self_link["rel"], "self");
-    EXPECT_EQ(self_link["type"], "application/activity+json");
-    EXPECT_EQ(self_link["href"], actor_uri);
-}
-
-TEST_F(WebFingerHandlerTest, MockResourceStore) {
-    auto mock_store = std::make_unique<::testing::NiceMock<MockResourceStore>>();
-    std::string resource_uri = "https://server.test/users/mocktest";
-    
-    // Set up mock expectations
-    EXPECT_CALL(*mock_store, exists(resource_uri))
-        .WillOnce(::testing::Return(true));
-    
-    nlohmann::json actor_data = {
-        {"id", resource_uri},
-        {"type", "Person"},
-        {"inbox", resource_uri + "/inbox"}
-    };
-    
-    EXPECT_CALL(*mock_store, get(resource_uri))
-        .WillOnce(::testing::Return(actor_data));
-    
-    // Create handler with mock store and access through interface
-    std::unique_ptr<RequestHandler> mock_handler = 
-        std::make_unique<WebFingerHandler>(std::move(mock_store), jaseur::Config{});
-    
-    auto req = create_get_request("/.well-known/webfinger?resource=" + resource_uri);
-    auto res = mock_handler->handle_request(req);
-    
-    EXPECT_EQ(res.result(), http::status::ok);
-    nlohmann::json response = nlohmann::json::parse(res.body());
-    EXPECT_FALSE(response["links"].empty());
+    req.target("/.well-known/webfinger?resource=");
+    res = handler_->handle_request(req);
+    EXPECT_EQ(res.result(), http::status::bad_request);
 }

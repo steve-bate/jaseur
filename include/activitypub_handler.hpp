@@ -16,22 +16,27 @@ class LlmResponderService;
 
 class ActivityPubHandler : public RequestHandler {
 public:
+    // Constructors with private resource store
     ActivityPubHandler(const Config& config);
-    ActivityPubHandler(std::unique_ptr<ResourceStore> storage, const Config& config);
-    ActivityPubHandler(std::unique_ptr<ResourceStore> storage, 
+    ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                      std::unique_ptr<ResourceStore> private_storage,
+                      const Config& config);
+    ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                      std::unique_ptr<ResourceStore> private_storage,
                       std::shared_ptr<DeliveryService> delivery_service,
-                      const Config& config,
-                      std::string private_data_dir = "data/private");
-    ActivityPubHandler(std::unique_ptr<ResourceStore> storage, 
+                      const Config& config);
+    ActivityPubHandler(std::unique_ptr<ResourceStore> storage,
+                      std::unique_ptr<ResourceStore> private_storage,
                       std::shared_ptr<DeliveryService> delivery_service,
                       std::shared_ptr<LlmResponderService> llm_responder_service,
-                      const Config& config,
-                      std::string private_data_dir = "data/private");
+                      const Config& config);
                       
     bool can_handle(const http::request<http::string_body>& req) const override;
 
     // Method to access storage for testing purposes
     ResourceStore* get_storage() const { return storage_.get(); }
+    // Method to access private storage for testing purposes
+    ResourceStore* get_private_storage() const { return private_storage_.get(); }
 
 protected:
     http::response<http::string_body> handle_request_impl(
@@ -42,6 +47,9 @@ protected:
     
     // Bearer token validation - made protected to allow test subclasses to override
     virtual bool validate_bearer_token(const http::request<http::string_body>& req, const std::string& actor_uri);
+
+    // Protected helper methods for testing
+    bool is_local_uri(const std::string& uri) const;
 
 private:
     bool handle_follow_activity(const nlohmann::json& activity);
@@ -73,8 +81,8 @@ private:
     
     // Private member variables
     std::unique_ptr<ResourceStore> storage_;
+    std::unique_ptr<ResourceStore> private_storage_;  // Private resource store
     std::shared_ptr<DeliveryService> delivery_service_;
     std::shared_ptr<LlmResponderService> llm_responder_service_;
-    std::string private_data_dir_;
 };
 } // namespace jaseur

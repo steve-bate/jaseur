@@ -7,20 +7,11 @@
 
 namespace jaseur {
 
-WebFingerHandler::WebFingerHandler(const Config& config)
-    : RequestHandler(config), 
-      storage_(std::make_unique<FileResourceStore>("data.public")) {}
-
-WebFingerHandler::WebFingerHandler(std::unique_ptr<ResourceStore> storage, const Config& config)
+WebFingerHandler::WebFingerHandler(std::shared_ptr<ResourceStore> public_storage,
+                                    const Config& config)
     : RequestHandler(config),
-      storage_(std::move(storage)) {}
+      public_storage_(std::move(public_storage)) {}
 
-void WebFingerHandler::set_storage_dir(const string& dir) {
-    auto file_store = dynamic_cast<FileResourceStore*>(storage_.get());
-    if (file_store) {
-        file_store->set_storage_dir(dir);
-    }
-}
 
 bool WebFingerHandler::can_handle(const http::request<http::string_body>& req) const {
     string target = string(req.target());
@@ -49,90 +40,33 @@ bool WebFingerHandler::is_valid_uri(const string& uri) {
     return valid;
 }
 
-optional<string> WebFingerHandler::find_resource_id(const string& resource_uri) {
-    try {
-        Logger::get().debug("Looking up resource ID for URI: {}", resource_uri);
-        
-        // Direct match with URI as id - use get() directly instead of a query
-        if (storage_->exists(resource_uri)) {
-            nlohmann::json actor_data = storage_->get(resource_uri);
-            if (actor_data.contains("inbox")) {
-                Logger::get().debug("Found direct match for resource: {}", resource_uri);
-                return resource_uri;
-            }
-        }
-        
-        // If the direct ID match failed, search for resources with this URI in alsoKnownAs
-        Query aka_query;
-        aka_query["alsoKnownAs"] = resource_uri;
-        auto aka_matches = storage_->query(aka_query);
-        
-        // We expect at most one match. More than one is a server error
-        if (aka_matches.size() > 1) {
-            Logger::get().error("Server error: Multiple resources with alsoKnownAs = {}", resource_uri);
-            return std::nullopt;
-        }
-        
-        // Check if we found one match
-        if (aka_matches.size() == 1 && aka_matches[0].contains("inbox")) {
-            Logger::get().debug("Found resource with alsoKnownAs = {}", resource_uri);
-            return aka_matches[0]["id"].get<string>();
-        }
-        
-        // The query above only works if alsoKnownAs is a string, not an array
-        // We need to check for arrays manually
-        Query has_aka_query;
-        // Don't limit by type - search all resources
-        auto potential_resources = storage_->query(has_aka_query);
-        
-        nlohmann::json matching_resource;
-        int match_count = 0;
-        
-        for (const auto& resource : potential_resources) {
-            if (!resource.contains("inbox") || !resource.contains("alsoKnownAs")) {
-                continue;
-            }
-            
-            const auto& aka = resource["alsoKnownAs"];
-            
-            // Skip if we already checked this case (string value)
-            if (aka.is_string()) {
-                continue;
-            }
-            
-            // Check array of strings
-            if (aka.is_array()) {
-                for (const auto& alias : aka) {
-                    if (alias.is_string() && alias.get<string>() == resource_uri) {
-                        matching_resource = resource;
-                        match_count++;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // We expect at most one match. More than one is a server error
-        if (match_count > 1) {
-            Logger::get().error("Server error: Multiple resources with alsoKnownAs array containing {}", resource_uri);
-            return std::nullopt;
-        }
-        
-        if (match_count == 1) {
-            Logger::get().debug("Found resource {} in alsoKnownAs array of resource {}", 
-                resource_uri, matching_resource["id"].get<string>());
-            return matching_resource["id"].get<string>();
-        }
-        
-        Logger::get().debug("No matching resource found for URI: {}", resource_uri);
-        return std::nullopt;
-    } catch (const std::exception& e) {
-        Logger::get().error("Error looking up resource ID: {}", e.what());
-        return std::nullopt;
-    } catch (...) {
-        Logger::get().error("Unknown error looking up resource ID");
-        return std::nullopt;
+string WebFingerHandler::get_uri_prefix(const string& uri) {
+    std::regex prefix_regex(R"((https?://[^/]+))");
+    std::smatch matches;
+    if (std::regex_search(uri, matches, prefix_regex) && matches.size() > 1) {
+        return matches[1].str();
     }
+    return "";
+}
+
+optional<string> WebFingerHandler::find_resource_id(const string& resource_uri) {
+    // 1. Direct match in public store
+    auto resource = public_storage_->get(resource_uri);
+    if (!resource.empty()) {
+        return resource["id"].get<string>();
+    }
+
+    // 2. alsoKnownAs in public store
+    Query query;
+    auto prefix = get_uri_prefix(resource_uri);
+    query["@prefix"] = prefix;
+    query["alsoKnownAs"] = resource_uri;
+    resource = public_storage_->query(query);
+    if (!resource.empty()) {
+        return resource[0]["id"].get<string>();
+    }
+
+    return std::nullopt;
 }
 
 bool WebFingerHandler::has_actor_inbox(const string& resource) {
@@ -172,15 +106,30 @@ string WebFingerHandler::create_webfinger_response(const string& resource) {
 }
 
 http::response<http::string_body> WebFingerHandler::handle_request_impl(
-    const http::request<http::string_body, http::basic_fields<std::allocator<char>>>& req) {
+    const http::request<http::string_body>& req) {
     
     Logger::get().info("Handling WebFinger request: {}", string(req.target()));
     
     http::response<http::string_body> res{http::status::ok, 11};
     res.set(http::field::server, fmt::format("{} {}", SERVER_NAME, VERSION));
+    
+    // Validate Accept header - handle string_view carefully
+    auto accept_it = req.find(http::field::accept);
+    if (accept_it != req.end()) {
+        boost::beast::string_view accept_view = accept_it->value();
+        std::string accept_value{accept_view.data(), accept_view.size()};
+        if (accept_value != "*/*" && accept_value.find("application/jrd+json") == std::string::npos) {
+            Logger::get().warn("Invalid Accept header: {}", accept_value);
+            res.result(http::status::not_acceptable);
+            res.set(http::field::content_type, "application/json");
+            res.body() = R"({"error": "Only application/jrd+json is supported"})";
+            return res;
+        }
+    }
+
     res.set(http::field::content_type, "application/jrd+json");
+
     try {
-        // Only handle GET requests to /.well-known/webfinger
         string target = string(req.target());
         if (req.method() != http::verb::get || target.find("/.well-known/webfinger") != 0) {
             Logger::get().warn("Invalid request method or path: {} {}", std::string(req.method_string()), target);
@@ -188,7 +137,7 @@ http::response<http::string_body> WebFingerHandler::handle_request_impl(
             res.body() = "{\"error\": \"Not found\"}";
             return res;
         }
-        // Parse query string to get resource parameter
+
         auto query_pos = target.find('?');
         if (query_pos == string::npos) {
             Logger::get().warn("Missing query string in request: {}", target);
@@ -203,19 +152,42 @@ http::response<http::string_body> WebFingerHandler::handle_request_impl(
         if (!resource || resource->empty()) {
             Logger::get().warn("Missing or empty resource parameter");
             res.result(http::status::bad_request);
-            res.body() = "{\"error\": \"Missing resource parameter\"}";
+            res.body() = "{\"error\": \"Missing or invalid resource parameter\"}";
             return res;
         }
+
         if (!is_valid_uri(*resource)) {
             Logger::get().warn("Invalid resource URI format: {}", *resource);
             res.result(http::status::bad_request);
             res.body() = "{\"error\": \"Invalid resource URI\"}";
             return res;
         }
-        
-        res.body() = create_webfinger_response(*resource);
+
+        // Try to find the resource
+        auto actor_id = find_resource_id(*resource);
+        if (!actor_id) {
+            Logger::get().info("Resource not found: {}", *resource);
+            res.result(http::status::not_found);
+            res.body() = "{\"error\": \"Resource not found\"}";
+            return res;
+        }
+
+        // Create WebFinger response
+        nlohmann::json response = {
+            {"subject", *resource},
+            {"links", nlohmann::json::array({
+                {
+                    {"rel", "self"},
+                    {"type", "application/activity+json"},
+                    {"href", *actor_id}
+                }
+            })}
+        };
+
+        res.body() = response.dump();
         Logger::get().info("Successfully handled WebFinger request for resource: {}", *resource);
         return res;
+
     } catch (const std::exception& e) {
         Logger::get().error("Error handling WebFinger request: {}", e.what());
         res.result(http::status::internal_server_error);

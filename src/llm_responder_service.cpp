@@ -5,23 +5,22 @@
 #include <chrono>
 #include <iomanip>
 #include <spdlog/spdlog.h>
-#include <openssl/evp.h>
 #include "logging.hpp"
 
 namespace jaseur {
 
 LlmResponderService::LlmResponderService(
     std::shared_ptr<ResourceStore> resource_store,
+    std::shared_ptr<ResourceStore> private_store,
     std::shared_ptr<DeliveryService> delivery_service,
     std::shared_ptr<HttpClient> http_client,
-    std::string private_data_dir,
     std::string llm_endpoint,
     std::string llm_model,
     bool no_filesystem)
     : resource_store_(std::move(resource_store))
+    , private_store_(std::move(private_store))
     , delivery_service_(std::move(delivery_service))
     , http_client_(std::move(http_client))
-    , private_data_dir_(std::move(private_data_dir))
     , llm_endpoint_(std::move(llm_endpoint))
     , llm_model_(std::move(llm_model))
     , no_filesystem_(no_filesystem) {
@@ -121,60 +120,14 @@ nlohmann::json LlmResponderService::load_actor_private_data(const std::string& a
     }
 
     try {
-        // Create the key identifier
-        std::string key_id = actor_id + "#private";
+        // Create private data ID by appending /private to actor ID
+        std::string private_id = actor_id + "/private";
 
-        // Hash the key identifier using EVP interface
-        std::string key_hash;
-        {
-            EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-            if (!ctx) return nlohmann::json();
-            
-            if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return nlohmann::json();
-            }
-            
-            if (EVP_DigestUpdate(ctx, key_id.c_str(), key_id.size()) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return nlohmann::json();
-            }
-            
-            unsigned char hash[EVP_MAX_MD_SIZE];
-            unsigned int hash_len;
-            
-            if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
-                EVP_MD_CTX_free(ctx);
-                return nlohmann::json();
-            }
-            
-            EVP_MD_CTX_free(ctx);
-            
-            std::stringstream ss;
-            for (unsigned int i = 0; i < hash_len; i++) {
-                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
-            }
-            key_hash = ss.str();
-        }
-
-        // Build full path using the hash
-        std::filesystem::path path = private_data_dir_;
-        path /= key_hash + ".json";
-
-        // Check if file exists
-        if (!std::filesystem::exists(path)) {
-            return nlohmann::json();
-        }
-
-        // Read file
-        std::ifstream file(path);
-        if (!file.is_open()) {
-            return nlohmann::json();
-        }
-
-        return nlohmann::json::parse(file);
+        // Let the private store handle any necessary hashing internally
+        return private_store_->get(private_id);
 
     } catch (const std::exception& e) {
+        Logger::get().error("Error loading private data for actor {}: {}", actor_id, e.what());
         return nlohmann::json();
     }
 }

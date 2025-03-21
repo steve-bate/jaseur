@@ -16,7 +16,8 @@ namespace jaseur {
     public:
         // Default constructor removed since we need config
         explicit WebFingerHandler(const Config& config);
-        WebFingerHandler(std::unique_ptr<ResourceStore> storage, const Config& config);
+        WebFingerHandler(std::shared_ptr<ResourceStore> public_storage, 
+                         const Config& config);
         ~WebFingerHandler() override = default;
         
         bool can_handle(const http::request<http::string_body>& req) const override;
@@ -26,11 +27,14 @@ namespace jaseur {
         http::response<http::string_body> handle_request_impl(
             const http::request<http::string_body>& req) override;
     private:
+        std::shared_ptr<ResourceStore> public_storage_;
+        
+        string get_uri_prefix(const string& uri);
+
         optional<string> parse_resource_param(const string& query_string);
         bool is_valid_uri(const string& uri);
         optional<string> find_resource_id(const string& resource_uri);
         bool has_actor_inbox(const string& resource);
         string create_webfinger_response(const string& resource);
-        std::unique_ptr<ResourceStore> storage_;
     };
 } // namespace jaseur

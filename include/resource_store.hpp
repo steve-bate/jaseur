@@ -28,10 +28,10 @@ public:
 // FileResourceStore implementation that uses filesystem storage
 class FileResourceStore : public ResourceStore {
 public:
-    explicit FileResourceStore(std::string storage_dir = "data", bool hash_only_mode = false)
-        : storage_dir_(std::move(storage_dir)), hash_only_mode_(hash_only_mode) {
-            if (!hash_only_mode_) {
-                ensure_storage_dir();
+    explicit FileResourceStore(std::string storage_dir = "data")
+        : storage_dir_(std::move(storage_dir)) {
+            if (!std::filesystem::exists(storage_dir_)) {
+                throw std::runtime_error("Storage directory does not exist: " + storage_dir_);
             }
         }
     ~FileResourceStore() override = default;
@@ -49,24 +49,25 @@ public:
     }
     
     // Helper methods
-    std::string compute_hash(const std::string& uri);
     std::string extract_domain_info(const std::string& uri);
-    std::string generate_uuid();
+    std::string extract_url_path(const std::string& uri);
     std::string get_storage_path(const std::string& uri, bool for_write = false);
-    bool store_json(const std::string& uri, const std::string& json_str);
-    std::string load_json_str(const std::string& uri);
-    void ensure_storage_dir();
     
     // Storage directory management
     const std::string& get_storage_dir() const { return storage_dir_; }
+    
     void set_storage_dir(std::string dir) { 
         storage_dir_ = std::move(dir);
-        ensure_storage_dir();
+        if (!std::filesystem::exists(storage_dir_)) {
+            throw std::runtime_error("Storage directory does not exist: " + storage_dir_);
+        }
     }
     
 private:
+    bool put_string(const std::string& uri, const std::string& json_str);
+    std::string get_string(const std::string& uri);
+    std::vector<nlohmann::json> query_prefix(const std::filesystem::path& domain_path, const Query& query);
     std::string storage_dir_;
-    bool hash_only_mode_ = false;
     
     // Maps URIs to their storage paths for faster lookups
     std::map<std::string, std::string> uri_to_path_cache_;

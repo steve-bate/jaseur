@@ -11,38 +11,6 @@
 using namespace jaseur;
 using json = nlohmann::json;
 
-// Test subclass that disables signature verification
-class TestActivityPubHandler : public ActivityPubHandler {
-protected:
-    bool validate_http_signature([[maybe_unused]] const http::request<http::string_body>& req) override {
-        return true; // Always validate for testing
-    }
-public:
-    explicit TestActivityPubHandler(std::unique_ptr<ResourceStore> store)
-        : ActivityPubHandler(std::move(store), jaseur::Config{}) {}
-
-    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service)
-        : ActivityPubHandler(std::move(store), delivery_service, jaseur::Config{}) {}
-
-    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service, const jaseur::Config& config)
-        : ActivityPubHandler(std::move(store), delivery_service, config) {}
-
-    using ActivityPubHandler::ActivityPubHandler;
-};
-
-// Test fixture for ActivityPubHandler tests
-class ActivityPubHandlerTestFixture : public ::testing::Test {
-protected:
-    void SetUp() override {
-        // Initialize logger with debug level before each test
-        Logger::init("debug");
-    }
-    
-    void TearDown() override {
-        // Any cleanup needed after tests
-    }
-};
-
 // Mock implementation of ResourceStore for testing
 class APMockResourceStore : public ResourceStore {
 public:
@@ -106,12 +74,46 @@ public:
     }
 };
 
+// Test subclass that disables signature verification
+class TestActivityPubHandler : public ActivityPubHandler {
+protected:
+    bool validate_http_signature([[maybe_unused]] const http::request<http::string_body>& req) override {
+        return true; // Always validate for testing
+    }
+public:
+    explicit TestActivityPubHandler(std::unique_ptr<ResourceStore> store)
+        : ActivityPubHandler(std::move(store), std::make_unique<APMockResourceStore>(), jaseur::Config{}) {}
+
+    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, const jaseur::Config& config)
+        : ActivityPubHandler(std::move(store), std::make_unique<APMockResourceStore>(), config) {}
+
+    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service)
+        : ActivityPubHandler(std::move(store), std::make_unique<APMockResourceStore>(), delivery_service, jaseur::Config{}) {}
+
+    TestActivityPubHandler(std::unique_ptr<ResourceStore> store, std::shared_ptr<DeliveryService> delivery_service, const jaseur::Config& config)
+        : ActivityPubHandler(std::move(store), std::make_unique<APMockResourceStore>(), delivery_service, config) {}
+
+    using ActivityPubHandler::ActivityPubHandler;
+};
+
+// Test fixture for ActivityPubHandler tests
+class ActivityPubHandlerTestFixture : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // Initialize logger with debug level before each test
+        Logger::init("debug");
+    }
+    
+    void TearDown() override {
+        // Any cleanup needed after tests
+    }
+};
 
 // Mock implementation of DeliveryService for testing
 class MockDeliveryService : public DeliveryService {
 public:
     MockDeliveryService() 
-        : DeliveryService(std::make_shared<APMockResourceStore>(), nullptr, "", true) {}
+        : DeliveryService(std::make_shared<APMockResourceStore>(), nullptr, nullptr, true) {}
 
     bool deliver(const nlohmann::json& activity, [[maybe_unused]] const std::string& actor_id = "") override {
         delivered_activities.push_back(activity);
@@ -914,4 +916,88 @@ TEST_F(ActivityPubHandlerTestFixture, HandlesInboxCreateWithMultipleTargets) {
     ASSERT_TRUE(std::find(charlie_inbox_after["orderedItems"].begin(), 
                          charlie_inbox_after["orderedItems"].end(),
                          "https://example.com/activities/123") != charlie_inbox_after["orderedItems"].end());
+}
+
+// Test case for Delete activity handling with inbox/outbox cleanup
+TEST_F(ActivityPubHandlerTestFixture, HandlesDeleteActivityWithCollectionCleanup) {
+    auto mock_storage = std::make_unique<APMockResourceStore>();
+    
+    // Add a test actor
+    json actor = {
+        {"id", "https://example.org/users/alice"},
+        {"type", "Person"},
+        {"inbox", "https://example.org/users/alice/inbox"},
+        {"outbox", "https://example.org/users/alice/outbox"}
+    };
+    mock_storage->put(actor);
+
+    // Add the inbox collection with the to-be-deleted object
+    json inbox_collection = {
+        {"id", "https://example.org/users/alice/inbox"},
+        {"type", "OrderedCollection"},
+        {"totalItems", 2},
+        {"orderedItems", {
+            "https://example.org/users/alice/notes/123",
+            "https://example.org/users/alice/notes/789"
+        }}
+    };
+    mock_storage->put(inbox_collection);
+
+    // Add the outbox collection also referencing the object
+    json outbox_collection = {
+        {"id", "https://example.org/users/alice/outbox"},
+        {"type", "OrderedCollection"},
+        {"totalItems", 2},
+        {"orderedItems", {
+            "https://example.org/users/alice/notes/789",
+            "https://example.org/users/alice/notes/123"
+        }}
+    };
+    mock_storage->put(outbox_collection);
+
+    // Add a test object that will be deleted
+    json test_object = {
+        {"id", "https://example.org/users/alice/notes/123"},
+        {"type", "Note"},
+        {"attributedTo", "https://example.org/users/alice"},
+        {"content", "This will be deleted"},
+        {"summary", "A test note"},
+        {"name", "Test Note"}
+    };
+    mock_storage->put(test_object);
+
+    TestActivityPubHandler handler{std::move(mock_storage)};
+    auto* storage = static_cast<APMockResourceStore*>(handler.get_storage());
+
+    // Create Delete activity request
+    http::request<http::string_body> req{http::verb::post, "/users/alice/inbox", 11};
+    req.set(http::field::host, "example.org");
+    req.set("X-Forwarded-Proto", "https");
+    req.set("X-Test-Auth-Bypass", "true");
+    json delete_activity = {
+        {"@context", "https://www.w3.org/ns/activitystreams"},
+        {"type", "Delete"},
+        {"actor", "https://example.org/users/alice"},
+        {"object", "https://example.org/users/alice/notes/123"}
+    };
+    req.body() = delete_activity.dump();
+
+    auto res = handler.handle_request(req);
+    EXPECT_EQ(res.result_int(), 202); // Accepted
+
+    // Verify the object was replaced with a Tombstone
+    auto tombstone = storage->get("https://example.org/users/alice/notes/123");
+    EXPECT_EQ(tombstone["type"], "Tombstone");
+
+    // Verify the object was removed from the inbox collection
+    auto updated_inbox = storage->get("https://example.org/users/alice/inbox");
+    EXPECT_EQ(updated_inbox["totalItems"], 1);
+    ASSERT_EQ(updated_inbox["orderedItems"].size(), 1);
+    EXPECT_EQ(updated_inbox["orderedItems"][0], "https://example.org/users/alice/notes/789");
+
+    // Verify the object was removed from the outbox collection
+    auto updated_outbox = storage->get("https://example.org/users/alice/outbox");
+    EXPECT_EQ(updated_outbox["totalItems"], 1);
+    ASSERT_EQ(updated_outbox["orderedItems"].size(), 1);
+    EXPECT_EQ(updated_outbox["orderedItems"][0], "https://example.org/users/alice/notes/789");
 }

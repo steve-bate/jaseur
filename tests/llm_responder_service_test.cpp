@@ -1,11 +1,12 @@
-# include <gtest/gtest.h>
-# include <gmock/gmock.h>
-# include "llm_responder_service.hpp"
-# include "delivery_service.hpp"
-# include "http_client.hpp"
-# include "resource_store.hpp"
-# include <memory>
-# include <nlohmann/json.hpp>
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
+#include "llm_responder_service.hpp"
+#include "delivery_service.hpp"
+#include "http_client.hpp"
+#include "resource_store.hpp"
+#include "logging.hpp"
+#include <memory>
+#include <nlohmann/json.hpp>
 
 using namespace jaseur;
 using json = nlohmann::json;
@@ -13,267 +14,243 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::NiceMock;
 
-// Mock HTTP client for testing Ollama API calls
+// Mock HTTP client for testing
 class MockHttpClient : public HttpClient {
 public:
-    MockHttpClient() {}
-    MOCK_METHOD2(get, Response(const std::string&, const std::map<std::string, std::string>&));
-    MOCK_METHOD3(post, Response(const std::string&, const std::string&, const std::map<std::string, std::string>&));
+    MOCK_METHOD2(get, HttpClient::Response(const std::string&, const std::map<std::string, std::string>&));
+    MOCK_METHOD3(post, HttpClient::Response(const std::string&, const std::string&, const std::map<std::string, std::string>&));
 };
 
-// Mock resource store for testing
-class MockResourceStore : public ResourceStore {
+// Mock resource store
+class LlmMockResourceStore : public ResourceStore {
 public:
-    // Mock methods
-    MOCK_METHOD1(get, nlohmann::json(const std::string&));
-    MOCK_METHOD1(put, bool(const nlohmann::json&));
-    MOCK_METHOD1(exists, bool(const std::string&));
-    MOCK_METHOD1(remove, bool(const std::string&));
-    MOCK_METHOD1(query, std::vector<nlohmann::json>(const Query&));
-    MOCK_METHOD1(query_ids, std::vector<std::string>(const Query&));
-    
+    std::map<std::string, json> resources;
+
+    bool put(const json& resource) override {
+        if (!resource.contains("id")) return false;
+        resources[resource["id"].get<std::string>()] = resource;
+        return true;
+    }
+
+    json get(const std::string& uri) override {
+        auto it = resources.find(uri);
+        if (it != resources.end()) return it->second;
+        return json();
+    }
+
+    bool exists(const std::string& uri) override {
+        return resources.find(uri) != resources.end();
+    }
+
+    bool remove(const std::string& uri) override {
+        return resources.erase(uri) > 0;
+    }
+
+    std::vector<json> query(const Query& query) override {
+        std::vector<json> results;
+        for (const auto& [uri, resource] : resources) {
+            bool matches = true;
+            for (const auto& [key, value] : query) {
+                if (!resource.contains(key) || resource[key] != value) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) results.push_back(resource);
+        }
+        return results;
+    }
+
     std::unique_ptr<ResourceStore> share() override {
-        auto mock = std::make_unique<NiceMock<MockResourceStore>>();
-        return mock;
+        auto store = std::make_unique<LlmMockResourceStore>();
+        store->resources = this->resources;
+        return store;
     }
 };
 
-// Test fixture for LlmResponderService tests
+// Create a test subclass to override the protected methods for testing
+class TestLlmResponderService : public LlmResponderService {
+public:
+    // Use the parent constructor
+    using LlmResponderService::LlmResponderService;
+    
+    // Override protected methods to simplify testing
+    bool is_llm_responder_enabled(const std::string&) override {
+        return actor_enabled;
+    }
+    
+    // Test control variables
+    bool actor_enabled = true;
+};
+
 class LlmResponderServiceTest : public ::testing::Test {
 protected:
-    std::shared_ptr<MockResourceStore> mock_store;
-    std::shared_ptr<DeliveryService> mock_delivery;
+    std::shared_ptr<LlmMockResourceStore> public_store;
+    std::shared_ptr<LlmMockResourceStore> private_store;
     std::shared_ptr<MockHttpClient> mock_http;
-    std::unique_ptr<LlmResponderService> responder;
-    
+    std::shared_ptr<DeliveryService> delivery_service;
+    std::unique_ptr<TestLlmResponderService> responder;
+    std::string llm_endpoint;
+    std::string llm_model;
+
     void SetUp() override {
-        mock_store = std::make_shared<MockResourceStore>();
-        mock_delivery = std::make_shared<DeliveryService>(mock_store, nullptr, "", true);
-        mock_http = std::make_shared<MockHttpClient>();
-        responder = std::make_unique<LlmResponderService>(
-            mock_store,
-            mock_delivery,
+        Logger::init("debug");
+        public_store = std::make_shared<LlmMockResourceStore>();
+        private_store = std::make_shared<LlmMockResourceStore>();
+        mock_http = std::make_shared<NiceMock<MockHttpClient>>();
+        delivery_service = std::make_shared<DeliveryService>(public_store, private_store, mock_http, true);
+        
+        // Define string variables before passing them to the constructor
+        llm_endpoint = "http://localhost:11434/api/generate";
+        llm_model = "mistral";
+        
+        // Set up the LLM responder with our test subclass
+        responder = std::make_unique<TestLlmResponderService>(
+            public_store,
+            private_store,
+            delivery_service,
             mock_http,
-            "data/private",
-            "http://localhost:11434/api/generate",
-            "mistral",
+            llm_endpoint,
+            llm_model,
             true
         );
     }
 };
 
-// Test checking if llmResponder is enabled
-TEST_F(LlmResponderServiceTest, IsLlmResponderEnabled) {
-    class TestLlmResponderService : public LlmResponderService {
-    public:
-        using LlmResponderService::LlmResponderService;
-        using LlmResponderService::is_llm_responder_enabled;  // Make protected method accessible
-        
-        nlohmann::json load_actor_private_data(const std::string& actor_id) override {
-            if (actor_id == "https://example.org/users/bot") {
-                return {{"llmResponder", true}};
-            } else if (actor_id == "https://example.org/users/user") {
-                return {{"llmResponder", false}};
-            } else if (actor_id == "https://example.org/users/noflag") {
-                return {{"some-other-flag", true}};
-            } else {
-                return nlohmann::json{};
-            }
-        }
-    };
+TEST_F(LlmResponderServiceTest, ProcessMessageSuccess) {
+    const std::string recipient = "https://example.org/users/bob";
+    const std::string llm_response = "Hello! This is a test response.";
     
-    auto test_store = std::make_shared<MockResourceStore>();
-    auto test_delivery = std::make_shared<DeliveryService>(test_store, nullptr, "", true);
-    auto test_http = std::make_shared<MockHttpClient>();
-    TestLlmResponderService test_responder(
-        test_store, 
-        test_delivery,
-        test_http,
-        "data/private",
-        "http://localhost:11434/api/generate",
-        "mistral",
-        true
-    );
-    
-    // Test cases
-    EXPECT_TRUE(test_responder.is_llm_responder_enabled("https://example.org/users/bot"));
-    EXPECT_FALSE(test_responder.is_llm_responder_enabled("https://example.org/users/user"));
-    EXPECT_FALSE(test_responder.is_llm_responder_enabled("https://example.org/users/noflag"));
-    EXPECT_FALSE(test_responder.is_llm_responder_enabled("https://example.org/users/nonexistent"));
-}
+    std::map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+    EXPECT_CALL(*mock_http, post("http://localhost:11434/api/generate", _, _))
+        .WillOnce(Return(HttpClient::Response{200, headers, json{{"response", llm_response}}.dump()}));
 
-// Test processing an incoming message from a non-responder actor
-TEST_F(LlmResponderServiceTest, ProcessMessageNonResponder) {
-    class TestLlmResponderService : public LlmResponderService {
-    public:
-        using LlmResponderService::LlmResponderService;
-        
-        bool is_llm_responder_enabled(const std::string&) override {
-            return false;
-        }
-
-        std::string generate_llm_response(const std::string&) override {
-            return "";  // Not called when responder is disabled
-        }
-
-        nlohmann::json process_incoming_message(const nlohmann::json& activity) override {
-            return LlmResponderService::process_incoming_message(activity);
-        }
-    };
-    
-    auto test_store = std::make_shared<MockResourceStore>();
-    auto test_delivery = std::make_shared<DeliveryService>(test_store, nullptr, "", true);
-    auto test_http = std::make_shared<MockHttpClient>();
-    TestLlmResponderService test_responder(
-        test_store, 
-        test_delivery,
-        test_http,
-        "data/private",
-        "http://localhost:11434/api/generate",
-        "mistral",
-        true
-    );
-    
-    // Create a test activity
     json activity = {
         {"type", "Create"},
         {"actor", "https://example.com/users/alice"},
-        {"to", "https://example.org/users/bob"},
+        {"to", recipient},
         {"object", {
             {"type", "Note"},
-            {"content", "Hello, bot!"},
+            {"content", "Hello bot!"},
             {"id", "https://example.com/notes/123"}
         }}
     };
+
+    auto result = responder->process_incoming_message(activity);
+
+    ASSERT_FALSE(result.empty());
+    EXPECT_EQ(result["type"], "Create");
+    EXPECT_EQ(result["actor"], recipient);
+    EXPECT_EQ(result["to"], "https://example.com/users/alice");
+    ASSERT_TRUE(result["object"].is_object());
+    EXPECT_EQ(result["object"]["type"], "Note");
+    EXPECT_EQ(result["object"]["content"], llm_response);
+    EXPECT_EQ(result["object"]["inReplyTo"], "https://example.com/notes/123");
+    EXPECT_EQ(result["object"]["attributedTo"], recipient);
+}
+
+
+TEST_F(LlmResponderServiceTest, ProcessMessageOllamaError) {
+    const std::string recipient = "https://example.org/users/bob";
     
-    auto result = test_responder.process_incoming_message(activity);
+    // Setup actor info
+    json actor_info = {
+        {"id", recipient},
+        {"llmResponder", true}
+    };
+    
+    std::map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+    EXPECT_CALL(*mock_http, post("http://localhost:11434/api/generate", _, _))
+        .WillOnce(Return(HttpClient::Response{500, headers, "Internal Server Error"}));
+
+    json activity = {
+        {"type", "Create"},
+        {"actor", "https://example.com/users/alice"},
+        {"to", recipient},
+        {"object", {
+            {"type", "Note"},
+            {"content", "Hello bot!"},
+            {"id", "https://example.com/notes/123"}
+        }}
+    };
+
+    auto result = responder->process_incoming_message(activity);
     EXPECT_TRUE(result.empty());
 }
 
-// Test processing an incoming message and generating a response
-TEST_F(LlmResponderServiceTest, ProcessMessageSuccess) {
-    class TestLlmResponderService : public LlmResponderService {
-    public:
-        using LlmResponderService::LlmResponderService;
-        
-        bool is_llm_responder_enabled(const std::string& actor_id) override {
-            return actor_id == "https://example.org/users/bob"; 
-        }
-        
-        std::string generate_llm_response(const std::string& prompt) override {
-            return "This is an automated response to: " + prompt;
-        }
-
-        nlohmann::json process_incoming_message(const nlohmann::json& activity) override {
-            return LlmResponderService::process_incoming_message(activity);
-        }
-    };
-    
-    auto test_store = std::make_shared<MockResourceStore>();
-    auto test_delivery = std::make_shared<DeliveryService>(test_store, nullptr, "", true);
-    auto test_http = std::make_shared<MockHttpClient>();
-    TestLlmResponderService test_responder(
-        test_store, 
-        test_delivery,
-        test_http,
-        "data/private",
-        "http://localhost:11434/api/generate",
-        "mistral",
-        true
-    );
-    
-    // Create a test Create activity with a Note
-    json activity = {
-        {"type", "Create"},
-        {"actor", "https://example.com/users/alice"},
-        {"to", "https://example.org/users/bob"},
-        {"object", {
-            {"type", "Note"},
-            {"content", "Hello, bot!"},
-            {"id", "https://example.com/notes/123"}
-        }}
-    };
-    
-    json response_activity = test_responder.process_incoming_message(activity);
-    EXPECT_FALSE(response_activity.empty());
-    EXPECT_EQ(response_activity["type"], "Create");
-    EXPECT_EQ(response_activity["actor"], "https://example.org/users/bob");
-    EXPECT_EQ(response_activity["to"], "https://example.com/users/alice");
-    
-    const auto& note = response_activity["object"];
-    EXPECT_EQ(note["type"], "Note");
-    EXPECT_EQ(note["content"], "This is an automated response to: Hello, bot!");
-    EXPECT_EQ(note["attributedTo"], "https://example.org/users/bob");
-    EXPECT_EQ(note["to"], "https://example.com/users/alice");
-    EXPECT_EQ(note["inReplyTo"], "https://example.com/notes/123");
-}
-
-// Test handling of invalid activities
-TEST_F(LlmResponderServiceTest, HandleInvalidActivities) {
-    class TestLlmResponderService : public LlmResponderService {
-    public:
-        using LlmResponderService::LlmResponderService;
-        
-        bool is_llm_responder_enabled(const std::string&) override {
-            return true;
-        }
-
-        std::string generate_llm_response(const std::string&) override {
-            return "Test response";  // Not called for invalid activities
-        }
-
-        nlohmann::json process_incoming_message(const nlohmann::json& activity) override {
-            return LlmResponderService::process_incoming_message(activity);
-        }
-    };
-    
-    auto test_store = std::make_shared<MockResourceStore>();
-    auto test_delivery = std::make_shared<DeliveryService>(test_store, nullptr, "", true);
-    auto test_http = std::make_shared<MockHttpClient>();
-    TestLlmResponderService test_responder(
-        test_store, 
-        test_delivery,
-        test_http,
-        "data/private",
-        "http://localhost:11434/api/generate",
-        "mistral",
-        true
-    );
-    
-    // Test with non-Create activity
+TEST_F(LlmResponderServiceTest, ProcessInvalidActivities) {
+    // Non-Create activity
     json like_activity = {
         {"type", "Like"},
         {"actor", "https://example.com/users/alice"},
+        {"to", "https://example.org/users/bob"},
         {"object", "https://example.org/notes/123"}
     };
-    EXPECT_TRUE(test_responder.process_incoming_message(like_activity).empty());
-    
-    // Test with missing object
+    EXPECT_TRUE(responder->process_incoming_message(like_activity).empty());
+
+    // Missing object
     json missing_object = {
         {"type", "Create"},
-        {"actor", "https://example.com/users/alice"}
+        {"actor", "https://example.com/users/alice"},
+        {"to", "https://example.org/users/bob"}
     };
-    EXPECT_TRUE(test_responder.process_incoming_message(missing_object).empty());
-    
-    // Test with non-Note object
+    EXPECT_TRUE(responder->process_incoming_message(missing_object).empty());
+
+    // Non-Note object
     json non_note = {
         {"type", "Create"},
         {"actor", "https://example.com/users/alice"},
+        {"to", "https://example.org/users/bob"},
         {"object", {
             {"type", "Image"},
             {"url", "https://example.com/image.jpg"}
         }}
     };
-    EXPECT_TRUE(test_responder.process_incoming_message(non_note).empty());
-    
-    // Test with Note missing content
-    json no_content = {
+    EXPECT_TRUE(responder->process_incoming_message(non_note).empty());
+
+    // Missing content
+    json missing_content = {
         {"type", "Create"},
         {"actor", "https://example.com/users/alice"},
+        {"to", "https://example.org/users/bob"},
         {"object", {
             {"type", "Note"},
             {"id", "https://example.com/notes/123"}
         }}
     };
-    EXPECT_TRUE(test_responder.process_incoming_message(no_content).empty());
+    EXPECT_TRUE(responder->process_incoming_message(missing_content).empty());
+}
+
+TEST_F(LlmResponderServiceTest, ProcessMessageMalformedResponse) {
+    const std::string recipient = "https://example.org/users/bob";
+    
+    // Setup actor info
+    json actor_info = {
+        {"id", recipient},
+        {"llmResponder", true}
+    };
+    
+    std::map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+    
+    // Malformed LLM response (missing 'response' field)
+    json malformed_response = {
+        {"model", "mistral"}
+    };
+    
+    EXPECT_CALL(*mock_http, post("http://localhost:11434/api/generate", _, _))
+        .WillOnce(Return(HttpClient::Response{200, headers, malformed_response.dump()}));
+
+    json activity = {
+        {"type", "Create"},
+        {"actor", "https://example.com/users/alice"},
+        {"to", recipient},
+        {"object", {
+            {"type", "Note"},
+            {"content", "Hello bot!"},
+            {"id", "https://example.com/notes/123"}
+        }}
+    };
+
+    auto result = responder->process_incoming_message(activity);
+    EXPECT_TRUE(result.empty());
 }

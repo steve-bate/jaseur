@@ -20,19 +20,14 @@ namespace jaseur {
 namespace fs = std::filesystem;
 
 DeliveryService::DeliveryService(
-    std::shared_ptr<ResourceStore> resource_store, 
+    std::shared_ptr<ResourceStore> public_store, 
+    std::shared_ptr<ResourceStore> private_store,
     std::shared_ptr<HttpClient> http_client,
-    std::string private_data_dir,
     bool no_filesystem)
-    : resource_store_(std::move(resource_store)), 
+    : public_store_(std::move(public_store)),
+      private_store_(std::move(private_store)), 
       http_client_(std::move(http_client)),
-      private_data_dir_(std::move(private_data_dir)),
       no_filesystem_(no_filesystem) {
-    
-    // Ensure the private data directory exists if filesystem is enabled
-    if (!no_filesystem_ && !fs::exists(private_data_dir_)) {
-        fs::create_directories(private_data_dir_);
-    }
 }
 
 bool DeliveryService::deliver(const nlohmann::json& activity, const std::string& actor_id) {
@@ -103,76 +98,30 @@ std::string DeliveryService::get_actor_private_key(const std::string& actor_id) 
     }
 
     // Create the key identifier
-    std::string key_id = actor_id + "#private";
+    std::string key_id = actor_id + "/private";
     Logger::get().info("Looking up private key for ID: {}", key_id);
     
-    // Hash the key identifier using EVP interface
-    std::string key_hash;
-    {
-        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-        if (!ctx) return "";
-        
-        if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
-            EVP_MD_CTX_free(ctx);
-            return "";
+    // Look up the private key in the private store
+    if (private_store_->exists(key_id)) {
+        nlohmann::json key_data = private_store_->get(key_id);
+        if (key_data.contains("privateKey")) {
+            Logger::get().info("Successfully loaded private key for {}", key_id);
+            return key_data["privateKey"].get<std::string>();
+        } else {
+            Logger::get().error("Private key document does not contain privateKey field: {}", key_id);
         }
-        
-        if (EVP_DigestUpdate(ctx, key_id.c_str(), key_id.size()) != 1) {
-            EVP_MD_CTX_free(ctx);
-            return "";
-        }
-        
-        unsigned char hash[EVP_MAX_MD_SIZE];
-        unsigned int hash_len;
-        
-        if (EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
-            EVP_MD_CTX_free(ctx);
-            return "";
-        }
-        
-        EVP_MD_CTX_free(ctx);
-        
-        std::stringstream ss;
-        for (unsigned int i = 0; i < hash_len; i++) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
-        }
-        key_hash = ss.str();
+    } else {
+        Logger::get().error("Private key not found: {}", key_id);
     }
     
-    // Try to read private key from JSON file
-    std::string key_path = fs::path(private_data_dir_) / (key_hash + ".json");
-    Logger::get().info("Looking for private key file: {}", key_path.c_str());
-
-    if (!fs::exists(key_path)) {
-        Logger::get().error("Private key file not found: {}", key_path.c_str());
-        return "";
-    }
-    
-    std::ifstream file(key_path);
-    if (!file.is_open()) {
-        Logger::get().error("Failed to open private key file: {}", key_path.c_str());
-        return "";
-    }
-    
-    try {
-        nlohmann::json key_data = nlohmann::json::parse(file);
-        if (!key_data.contains("privateKey")) {
-            Logger::get().error("Private key file does not contain privateKey field: {}", key_path.c_str());
-            return "";
-        }
-        Logger::get().info("Successfully loaded private key from {}", key_path.c_str());
-        return key_data["privateKey"].get<std::string>();
-    } catch (const std::exception& e) {
-        Logger::get().error("Failed to parse private key file {}: {}", key_path.c_str(), e.what());
-        return "";
-    }
+    return "";
 }
 
 nlohmann::json DeliveryService::load_actor(const std::string& actor_id) {
     try {
         // Check if the actor is in our local store
-        if (resource_store_->exists(actor_id)) {
-            return resource_store_->get(actor_id);
+        if (public_store_->exists(actor_id)) {
+            return public_store_->get(actor_id);
         }
         
         // If not, try to fetch it via HTTP
@@ -185,7 +134,7 @@ nlohmann::json DeliveryService::load_actor(const std::string& actor_id) {
             auto json = nlohmann::json::parse(response.body);
             
             // Cache the actor document for future use
-            resource_store_->put(json);
+            public_store_->put(json);
             
             return json;
         } else {
