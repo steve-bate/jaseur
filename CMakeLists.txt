@@ -65,8 +65,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-# Server library
-add_library(server_lib
+# Server library (renamed to jaseur_lib but outputs libjaseur.a)
+add_library(jaseur_lib
     src/server.cpp
     src/resource_handler.cpp
     src/webfinger_handler.cpp
@@ -77,13 +77,19 @@ add_library(server_lib
     src/llm_responder_service.cpp
     src/config.cpp
     src/request_handler.cpp
+    src/commands.cpp
 )
 
-target_include_directories(server_lib PUBLIC
+# Set output name to libjaseur without the automatic lib prefix
+set_target_properties(jaseur_lib PROPERTIES 
+    OUTPUT_NAME jaseur
+)
+
+target_include_directories(jaseur_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(server_lib PUBLIC
+target_link_libraries(jaseur_lib PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     toml11::toml11
@@ -94,7 +100,7 @@ target_link_libraries(server_lib PUBLIC
 
 # Main executable
 add_executable(jaseur src/main.cpp)
-target_link_libraries(jaseur PRIVATE server_lib)
+target_link_libraries(jaseur PRIVATE jaseur_lib)
 
 # Tests executable
 add_executable(jaseur_tests
@@ -107,7 +113,7 @@ add_executable(jaseur_tests
 )
 
 target_link_libraries(jaseur_tests PRIVATE
-    server_lib
+    jaseur_lib
     gtest_main
     gmock_main
 )
